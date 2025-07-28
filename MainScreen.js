@@ -1,74 +1,102 @@
-import React from "react";
-import {View, Text, StyleSheet, TouchableOpacity, Image} from "react-native";
-import TextComponent from "./components/TextComponent";
+import React from 'react';
+import {
+    StyleSheet,
+    Text,
+    View,
+    TextInput,
+    TouchableOpacity,
+    SafeAreaView,
+    ScrollView,
+    StatusBar,
+} from 'react-native';
 
-const MainScreen = ({ navigation }) => {
+// This is the main component for your new screen.
+// You can save this code in a new file called `MainScreen.js`.
+export default function MainScreen({ navigation }) {
     return (
-        <View style={styles.container}>
-            {/* Text List Section */}
-            <View style={styles.textSection}>
-                <TextComponent text="efsfes" />
-                <TextComponent text="EFFES" />
-                <TextComponent text="AEFSFF" />
-                <TextComponent text="TAEFSFES" />
-                <View style={styles.bottomSection}>
-                    <Image source={require('./assets/dog2.jpg')} style={styles.image} />
+        <SafeAreaView style={styles.safeArea}>
+            <StatusBar barStyle="dark-content" />
+            <ScrollView contentContainerStyle={styles.container}>
+                {/* Image Placeholder */}
+                <View style={styles.imagePlaceholder} />
+
+                {/* Month Button */}
+                <TouchableOpacity style={styles.button}>
+                    <Text style={styles.buttonText}>6-р сар</Text>
+                </TouchableOpacity>
+
+                {/* Information Box */}
+                <View style={styles.infoBox}>
+                    <Text style={styles.infoTitle}>Мэдээлэл</Text>
+                    <TextInput
+                        style={styles.infoInput}
+                        multiline
+                        numberOfLines={6}
+                        textAlignVertical="top" // Ensures text starts from the top on Android
+                    />
                 </View>
-            </View>
 
-            {/* Bottom Section */}
-
-
-            {/* Back Button */}
-            <TouchableOpacity style={styles.button} onPress={() => navigation.goBack()}>
-                <Text style={styles.buttonText}>Back</Text>
-            </TouchableOpacity>
-        </View>
+                {/* Save Button */}
+                <TouchableOpacity style={styles.button}>
+                    <Text style={styles.buttonText}>Хадгалах</Text>
+                </TouchableOpacity>
+            </ScrollView>
+        </SafeAreaView>
     );
-};
+}
 
+// --- Styles for the Main Screen ---
 const styles = StyleSheet.create({
+    safeArea: {
+        flex: 1,
+        backgroundColor: '#f0f2f5', // A light background color
+    },
     container: {
-        flex: 1,
-        flexDirection: "column",
-        marginTop: 20,
-    },
-    textSection: {
-        flex: 0.6,
-        backgroundColor: "#f8f8f8",
+        flexGrow: 1,
+        alignItems: 'center',
         padding: 20,
     },
-    bottomSection: {
-        flex: 1,
-        backgroundColor: "#e0e0e0",
-        padding: 20,
-        justifyContent: "center",
-        alignItems: "center",
-    },
-    text: {
-        fontSize: 18,
-        color: "#333",
+    imagePlaceholder: {
+        width: 200,
+        height: 200,
+        backgroundColor: '#000000',
+        borderRadius: 10,
+        borderWidth: 3,
+        borderColor: '#5dade2', // Blue border color from the image
+        marginBottom: 30,
     },
     button: {
-        position: "absolute",
-        bottom: 20,
-        left: 20,
-        backgroundColor: "#007bff",
-        paddingVertical: 10,
-        paddingHorizontal: 24,
-        borderRadius: 6,
+        width: '100%',
+        backgroundColor: '#5dade2',
+        paddingVertical: 15,
+        borderRadius: 10,
+        alignItems: 'center',
+        marginBottom: 20,
     },
     buttonText: {
-        color: "#fff",
+        color: '#ffffff',
         fontSize: 16,
-        fontWeight: "bold",
+        fontWeight: 'bold',
     },
-    image: {
-        flex: 1,
+    infoBox: {
         width: '100%',
-        height: '100%',
-        resizeMode: 'contain',
+        borderColor: '#5dade2',
+        borderWidth: 2,
+        borderRadius: 10,
+        padding: 15,
+        backgroundColor: '#ffffff',
+        marginBottom: 20,
+    },
+    infoTitle: {
+        fontSize: 20,
+        fontWeight: 'bold',
+        textAlign: 'center',
+        marginBottom: 10,
+        color: '#333',
+    },
+    infoInput: {
+        height: 150, // Fixed height for the text area
+        fontSize: 16,
+        color: '#333',
     },
 });
-
-export default MainScreen;
