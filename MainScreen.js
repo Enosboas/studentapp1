@@ -2,7 +2,7 @@ import React from "react";
 import {View, Text, StyleSheet, TouchableOpacity, Image} from "react-native";
 import TextComponent from "./components/TextComponent";
 
-const SecondScreen = ({ navigation }) => {
+const MainScreen = ({ navigation }) => {
     return (
         <View style={styles.container}>
             {/* Text List Section */}
@@ -71,4 +71,4 @@ const styles = StyleSheet.create({
     },
 });
 
-export default SecondScreen;
+export default MainScreen;
