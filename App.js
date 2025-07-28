@@ -5,21 +5,15 @@ import { createNativeStackNavigator } from '@react-navigation/native-stack';
 import { createBottomTabNavigator } from '@react-navigation/bottom-tabs';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 
-// --- Import your screens ---
-// Make sure you have a LoginScreen.js file for this to work.
 import LoginScreen from './LoginScreen';
-
-// This is the screen for the center tab button.
 import MainScreen from './MainScreen';
+import QRScannerScreen from './QRScannerScreen';
+import HistoryScreen from './HistoryScreen'; // 1. ADD THIS IMPORT
 
-// --- Placeholder screens for other tabs ---
-// These are simple components so the app can run without errors.
 function SearchScreen() {
     return <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center' }}><Text>Search!</Text></View>;
 }
-function HistoryScreen() {
-    return <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center' }}><Text>History!</Text></View>;
-}
+// 2. THE OLD HistoryScreen() FUNCTION IS DELETED FROM HERE
 function ProfileScreen() {
     return <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center' }}><Text>Profile!</Text></View>;
 }
@@ -27,19 +21,20 @@ function ProfileScreen() {
 const Tab = createBottomTabNavigator();
 const Stack = createNativeStackNavigator();
 
-// This component defines your bottom tab layout
-function MainTabNavigator() {
+// --- No changes needed in MainTabNavigator or the rest of the file ---
+function MainTabNavigator({ navigation }) {
+    // ... same as before
     return (
         <Tab.Navigator
             initialRouteName="MainScreen"
             screenOptions={{
-                tabBarActiveTintColor: '#5dade2', // Active icon color
-                headerShown: false, // Hides the header for all tab screens
+                tabBarActiveTintColor: '#5dade2',
+                headerShown: false,
             }}
         >
             <Tab.Screen
-                name="LoginTab" // Changed name to avoid conflict, component is now a placeholder
-                component={SearchScreen} // Using a placeholder, as Login is now outside tabs
+                name="Home"
+                component={SearchScreen}
                 options={{
                     tabBarLabel: 'Home',
                     tabBarIcon: ({ color, size }) => (
@@ -53,6 +48,7 @@ function MainTabNavigator() {
                 options={{
                     tabBarLabel: 'Search',
                     tabBarIcon: ({ color, size }) => (
+
                         <MaterialCommunityIcons name="magnify" color={color} size={size} />
                     ),
                 }}
@@ -64,24 +60,13 @@ function MainTabNavigator() {
                     tabBarButton: (props) => (
                         <TouchableOpacity
                             {...props}
-                            style={{
-                                top: -20, // This lifts the button up
-                                justifyContent: 'center',
-                                alignItems: 'center',
-                            }}
-                            onPress={() => props.onPress()} // Ensure navigation still works
+                            style={{ top: -20, justifyContent: 'center', alignItems: 'center' }}
+                            onPress={props.onPress}
                         >
                             <View style={{
-                                width: 70,
-                                height: 70,
-                                borderRadius: 35,
-                                backgroundColor: '#5dade2',
-                                justifyContent: 'center',
-                                alignItems: 'center',
-                                shadowColor: '#000',
-                                shadowOffset: { width: 0, height: 4 },
-                                shadowOpacity: 0.3,
-                                shadowRadius: 4,
+                                width: 70, height: 70, borderRadius: 35, backgroundColor: '#5dade2',
+                                justifyContent: 'center', alignItems: 'center', shadowColor: '#000',
+                                shadowOffset: { width: 0, height: 4 }, shadowOpacity: 0.3, shadowRadius: 4,
                                 elevation: 5,
                             }}>
                                 <MaterialCommunityIcons name="camera" color={'#fff'} size={30} />
@@ -114,24 +99,21 @@ function MainTabNavigator() {
     );
 }
 
-
-// This is now the main exported component
 export default function App() {
     return (
         <NavigationContainer>
             <Stack.Navigator initialRouteName="LoginScreen">
-                {/* The Login screen is now part of the Stack Navigator and has no tabs */}
                 <Stack.Screen
                     name="LoginScreen"
                     component={LoginScreen}
                     options={{ headerShown: false }}
                 />
-                {/* The MainTabNavigator contains all your tab screens */}
                 <Stack.Screen
-                    name="MainScreen"
+                    name="AppTabs"
                     component={MainTabNavigator}
                     options={{ headerShown: false }}
                 />
+                <Stack.Screen name="QRScannerScreen" component={QRScannerScreen} />
             </Stack.Navigator>
         </NavigationContainer>
     );
