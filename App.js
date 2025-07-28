@@ -1,5 +1,5 @@
 import React from 'react';
-import { View, Text } from 'react-native';
+import { View, Text, TouchableOpacity, } from 'react-native';
 import { NavigationContainer } from '@react-navigation/native';
 import { createNativeStackNavigator } from '@react-navigation/native-stack';
 import { createBottomTabNavigator } from '@react-navigation/bottom-tabs';
@@ -31,7 +31,7 @@ const Stack = createNativeStackNavigator();
 function MainTabNavigator() {
     return (
         <Tab.Navigator
-            initialRouteName="Main"
+            initialRouteName="MainScreen"
             screenOptions={{
                 tabBarActiveTintColor: '#5dade2', // Active icon color
                 headerShown: false, // Hides the header for all tab screens
@@ -58,24 +58,35 @@ function MainTabNavigator() {
                 }}
             />
             <Tab.Screen
-                name="Main"
+                name="MainScreen"
                 component={MainScreen}
                 options={{
-                    tabBarLabel: '', // No label for the center button
-                    tabBarIcon: ({ color, size }) => (
-                        <View style={{
-                            backgroundColor: '#5dade2',
-                            padding: 15,
-                            borderRadius: 30,
-                            bottom: 20,
-                            shadowColor: '#000',
-                            shadowOffset: { width: 0, height: 4 },
-                            shadowOpacity: 0.3,
-                            shadowRadius: 4,
-                            elevation: 5,
-                        }}>
-                            <MaterialCommunityIcons name="camera" color={'#fff'} size={size} />
-                        </View>
+                    tabBarButton: (props) => (
+                        <TouchableOpacity
+                            {...props}
+                            style={{
+                                top: -20, // This lifts the button up
+                                justifyContent: 'center',
+                                alignItems: 'center',
+                            }}
+                            onPress={() => props.onPress()} // Ensure navigation still works
+                        >
+                            <View style={{
+                                width: 70,
+                                height: 70,
+                                borderRadius: 35,
+                                backgroundColor: '#5dade2',
+                                justifyContent: 'center',
+                                alignItems: 'center',
+                                shadowColor: '#000',
+                                shadowOffset: { width: 0, height: 4 },
+                                shadowOpacity: 0.3,
+                                shadowRadius: 4,
+                                elevation: 5,
+                            }}>
+                                <MaterialCommunityIcons name="camera" color={'#fff'} size={30} />
+                            </View>
+                        </TouchableOpacity>
                     ),
                 }}
             />
@@ -108,7 +119,7 @@ function MainTabNavigator() {
 export default function App() {
     return (
         <NavigationContainer>
-            <Stack.Navigator initialRouteName="Login">
+            <Stack.Navigator initialRouteName="LoginScreen">
                 {/* The Login screen is now part of the Stack Navigator and has no tabs */}
                 <Stack.Screen
                     name="LoginScreen"
