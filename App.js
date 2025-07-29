@@ -1,29 +1,26 @@
-import React from 'react';
-import { View, Text, TouchableOpacity, } from 'react-native';
+import React, { useState, useEffect } from 'react';
+import { View, ActivityIndicator, TouchableOpacity } from 'react-native';
 import { NavigationContainer } from '@react-navigation/native';
 import { createNativeStackNavigator } from '@react-navigation/native-stack';
 import { createBottomTabNavigator } from '@react-navigation/bottom-tabs';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 
+// --- Firebase Imports ---
+import { onAuthStateChanged } from 'firebase/auth';
+import { auth } from './firebase'; // Ensure this path is correct
+
 import LoginScreen from './LoginScreen';
 import MainScreen from './MainScreen';
 import QRScannerScreen from './QRScannerScreen';
-import HistoryScreen from './HistoryScreen'; // 1. ADD THIS IMPORT
-
-function SearchScreen() {
-    return <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center' }}><Text>Search!</Text></View>;
-}
-// 2. THE OLD HistoryScreen() FUNCTION IS DELETED FROM HERE
-function ProfileScreen() {
-    return <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center' }}><Text>Profile!</Text></View>;
-}
+import HistoryScreen from './HistoryScreen';
+// --- Import the new ProfileScreen ---
+import ProfileScreen from './ProfileScreen';
 
 const Tab = createBottomTabNavigator();
 const Stack = createNativeStackNavigator();
 
-// --- No changes needed in MainTabNavigator or the rest of the file ---
-function MainTabNavigator({ navigation }) {
-    // ... same as before
+// --- Main App Tabs (Updated with Profile) ---
+function MainTabNavigator() {
     return (
         <Tab.Navigator
             initialRouteName="MainScreen"
@@ -33,23 +30,12 @@ function MainTabNavigator({ navigation }) {
             }}
         >
             <Tab.Screen
-                name="Home"
-                component={SearchScreen}
+                name="History"
+                component={HistoryScreen}
                 options={{
-                    tabBarLabel: 'Home',
+                    tabBarLabel: 'History',
                     tabBarIcon: ({ color, size }) => (
-                        <MaterialCommunityIcons name="home" color={color} size={size} />
-                    ),
-                }}
-            />
-            <Tab.Screen
-                name="Search"
-                component={SearchScreen}
-                options={{
-                    tabBarLabel: 'Search',
-                    tabBarIcon: ({ color, size }) => (
-
-                        <MaterialCommunityIcons name="magnify" color={color} size={size} />
+                        <MaterialCommunityIcons name="history" color={color} size={size} />
                     ),
                 }}
             />
@@ -75,16 +61,7 @@ function MainTabNavigator({ navigation }) {
                     ),
                 }}
             />
-            <Tab.Screen
-                name="History"
-                component={HistoryScreen}
-                options={{
-                    tabBarLabel: 'History',
-                    tabBarIcon: ({ color, size }) => (
-                        <MaterialCommunityIcons name="history" color={color} size={size} />
-                    ),
-                }}
-            />
+            {/* --- New Profile Tab --- */}
             <Tab.Screen
                 name="Profile"
                 component={ProfileScreen}
@@ -99,21 +76,50 @@ function MainTabNavigator({ navigation }) {
     );
 }
 
+// --- Auth-aware Navigation Logic (No changes here) ---
 export default function App() {
+    const [user, setUser] = useState(null);
+    const [initializing, setInitializing] = useState(true);
+
+    useEffect(() => {
+        const unsubscribe = onAuthStateChanged(auth, (user) => {
+            setUser(user);
+            if (initializing) {
+                setInitializing(false);
+            }
+        });
+        return unsubscribe;
+    }, []);
+
+    if (initializing) {
+        return (
+            <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center' }}>
+                <ActivityIndicator size="large" />
+            </View>
+        );
+    }
+
     return (
         <NavigationContainer>
-            <Stack.Navigator initialRouteName="LoginScreen">
-                <Stack.Screen
-                    name="LoginScreen"
-                    component={LoginScreen}
-                    options={{ headerShown: false }}
-                />
-                <Stack.Screen
-                    name="AppTabs"
-                    component={MainTabNavigator}
-                    options={{ headerShown: false }}
-                />
-                <Stack.Screen name="QRScannerScreen" component={QRScannerScreen} />
+            <Stack.Navigator>
+                {user ? (
+                    // --- User is Logged In: Show main app ---
+                    <>
+                        <Stack.Screen
+                            name="AppTabs"
+                            component={MainTabNavigator}
+                            options={{ headerShown: false }}
+                        />
+                        <Stack.Screen name="QRScannerScreen" component={QRScannerScreen} />
+                    </>
+                ) : (
+                    // --- No User: Show login screen ---
+                    <Stack.Screen
+                        name="LoginScreen"
+                        component={LoginScreen}
+                        options={{ headerShown: false }}
+                    />
+                )}
             </Stack.Navigator>
         </NavigationContainer>
     );

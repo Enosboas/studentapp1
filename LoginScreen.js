@@ -8,77 +8,122 @@ import {
     TouchableOpacity,
     SafeAreaView,
     StatusBar,
+    ActivityIndicator,
+    Alert,
 } from 'react-native';
-
-// Using icons from the library you already have installed
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 
-// This is the main component for your Login Screen.
-// You can save this code in a new file called `LoginScreen.js`.
+// --- Firebase Imports ---
+import {
+    createUserWithEmailAndPassword,
+    signInWithEmailAndPassword
+} from 'firebase/auth';
+import { auth } from './firebase';
+
 export default function LoginScreen({ navigation }) {
-    // State to manage the checkbox
-    const [rememberMe, setRememberMe] = useState(false);
+    const [email, setEmail] = useState('');
+    const [password, setPassword] = useState('');
+    const [isRegistering, setIsRegistering] = useState(false);
+    const [loading, setLoading] = useState(false);
+
+    const handleAuthentication = async () => {
+        if (email.trim() === '' || password.trim() === '') {
+            Alert.alert("Input Required", "Please enter both email and password.");
+            return;
+        }
+
+        setLoading(true);
+        try {
+            if (isRegistering) {
+                await createUserWithEmailAndPassword(auth, email, password);
+            } else {
+                await signInWithEmailAndPassword(auth, email, password);
+            }
+        } catch (error) {
+            let errorMessage = "An error occurred. Please try again.";
+            if (error.code === 'auth/email-already-in-use') {
+                errorMessage = "This email address is already in use.";
+            } else if (error.code === 'auth/invalid-email') {
+                errorMessage = "Please enter a valid email address.";
+            } else if (error.code === 'auth/weak-password') {
+                errorMessage = "The password must be at least 6 characters long.";
+            } else if (error.code === 'auth/user-not-found' || error.code === 'auth/wrong-password' || error.code === 'auth/invalid-credential') {
+                errorMessage = "Invalid email or password. Please try again.";
+            }
+            Alert.alert("Authentication Failed", errorMessage);
+        } finally {
+            setLoading(false);
+        }
+    };
+
 
     return (
         <SafeAreaView style={styles.safeArea}>
             <StatusBar barStyle="dark-content" />
             <View style={styles.container}>
-                {/* Logo */}
+                {/* --- CORRECTED IMAGE PATH --- */}
                 <Image
-                    source={require('../studentappd/assets/logo.png')} // Using a URL for the CTS logo
+                    source={require('./assets/logo.png')}
                     style={styles.logo}
                     resizeMode="contain"
                 />
 
-                {/* Email Input */}
                 <View style={styles.inputContainer}>
                     <MaterialCommunityIcons name="email-outline" size={22} color="#888" style={styles.icon} />
                     <TextInput
                         style={styles.input}
-                        placeholder="и-мейл" // E-mail in Mongolian
+                        placeholder="и-мейл"
                         placeholderTextColor="#888"
                         keyboardType="email-address"
                         autoCapitalize="none"
+                        value={email}
+                        onChangeText={setEmail}
                     />
                 </View>
 
-                {/* Password Input */}
                 <View style={styles.inputContainer}>
                     <MaterialCommunityIcons name="lock-outline" size={22} color="#888" style={styles.icon} />
                     <TextInput
                         style={styles.input}
-                        placeholder="Нууц үг" // Password in Mongolian
+                        placeholder="Нууц үг"
                         placeholderTextColor="#888"
-                        secureTextEntry // Hides the password
+                        secureTextEntry
+                        value={password}
+                        onChangeText={setPassword}
                     />
                 </View>
 
-                {/* Remember Me & Forgot Password */}
-                <View style={styles.optionsContainer}>
-                    <TouchableOpacity style={styles.checkboxContainer} onPress={() => setRememberMe(!rememberMe)}>
-                        <MaterialCommunityIcons
-                            name={rememberMe ? 'checkbox-marked' : 'checkbox-blank-outline'}
-                            size={24}
-                            color={rememberMe ? '#3B82F6' : '#888'}
-                        />
-                        <Text style={styles.checkboxLabel}>Намайг сана</Text>
-                    </TouchableOpacity>
+                <TouchableOpacity
+                    style={styles.loginButton}
+                    onPress={handleAuthentication}
+                    disabled={loading}
+                >
+                    {loading ? (
+                        <ActivityIndicator color="#ffffff" />
+                    ) : (
+                        <Text style={styles.loginButtonText}>
+                            {isRegistering ? 'БҮРТГҮҮЛЭХ' : 'НЭВТРЭХ'}
+                        </Text>
+                    )}
+                </TouchableOpacity>
 
-                    <TouchableOpacity>
-                        <Text style={styles.forgotPasswordText}>Нууц үг мартсан</Text>
-                    </TouchableOpacity>
-                </View>
-
-                {/* Login Button */}
-                <TouchableOpacity style={styles.loginButton} onPress={() => navigation.navigate('AppTabs')}>
-                    <Text style={styles.loginButtonText}>НЭВТРЭХ</Text>
+                <TouchableOpacity
+                    style={styles.toggleButton}
+                    onPress={() => setIsRegistering(!isRegistering)}
+                    disabled={loading}
+                >
+                    <Text style={styles.toggleButtonText}>
+                        {isRegistering
+                            ? 'Already have an account? Sign In'
+                            : "Don't have an account? Sign Up"}
+                    </Text>
                 </TouchableOpacity>
             </View>
         </SafeAreaView>
     );
 }
 
-// --- Styles for the Login Screen ---
+// --- Styles ---
 const styles = StyleSheet.create({
     safeArea: {
         flex: 1,
@@ -100,7 +145,7 @@ const styles = StyleSheet.create({
         flexDirection: 'row',
         alignItems: 'center',
         width: '100%',
-        backgroundColor: '#f3f4f6', // A light grey background
+        backgroundColor: '#f3f4f6',
         borderRadius: 10,
         paddingHorizontal: 15,
         marginBottom: 15,
@@ -115,38 +160,15 @@ const styles = StyleSheet.create({
         fontSize: 16,
         color: '#111827',
     },
-    optionsContainer: {
-        flexDirection: 'row',
-        justifyContent: 'space-between',
-        alignItems: 'center',
-        width: '100%',
-        marginBottom: 30,
-    },
-    checkboxContainer: {
-        flexDirection: 'row',
-        alignItems: 'center',
-    },
-    checkboxLabel: {
-        marginLeft: 8,
-        fontSize: 14,
-        color: '#4b5563',
-    },
-    forgotPasswordText: {
-        fontSize: 14,
-        color: '#3B82F6', // A standard blue link color
-        fontWeight: '600',
-    },
     loginButton: {
         width: '100%',
-        backgroundColor: '#3b82f6', // A nice blue color
+        backgroundColor: '#3b82f6',
         paddingVertical: 15,
         borderRadius: 10,
         alignItems: 'center',
+        marginTop: 20,
         shadowColor: '#000',
-        shadowOffset: {
-            width: 0,
-            height: 2,
-        },
+        shadowOffset: { width: 0, height: 2 },
         shadowOpacity: 0.25,
         shadowRadius: 3.84,
         elevation: 5,
@@ -155,5 +177,13 @@ const styles = StyleSheet.create({
         color: '#ffffff',
         fontSize: 16,
         fontWeight: 'bold',
+    },
+    toggleButton: {
+        marginTop: 20,
+    },
+    toggleButtonText: {
+        fontSize: 14,
+        color: '#3B82F6',
+        fontWeight: '600',
     },
 });
