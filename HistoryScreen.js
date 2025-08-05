@@ -1,6 +1,6 @@
 import React, { useState, useCallback, useMemo } from 'react';
 import {
-    StyleSheet, Text, View, SectionList, FlatList,
+    StyleSheet, Text, View, SectionList,
     SafeAreaView, StatusBar, TouchableOpacity, Alert, ActivityIndicator
 } from 'react-native';
 import { useFocusEffect } from '@react-navigation/native';
@@ -16,18 +16,16 @@ export default function HistoryScreen() {
     const [history, setHistory] = useState([]);
     const [loading, setLoading] = useState(true);
     const [loadingMore, setLoadingMore] = useState(false);
-    const [lastDoc, setLastDoc] = useState(null); // Keep track of the last document fetched
-    const [hasMore, setHasMore] = useState(true); // To know if there's more data to load
+    const [lastDoc, setLastDoc] = useState(null);
+    const [hasMore, setHasMore] = useState(true);
 
     const [selectedItems, setSelectedItems] = useState(new Set());
-    const [viewMode, setViewMode] = useState('month');
-    const [expandedDate, setExpandedDate] = useState(null);
+    const [viewMode, setViewMode] = useState('month'); // Can be 'month' or 'date'
 
     const isSelectionMode = selectedItems.size > 0;
 
-    // --- Fetch Initial Data ---
-    const fetchHistory = async () => {
-        setLoading(true);
+    const fetchHistory = async (isRefreshing = false) => {
+        if (!isRefreshing) setLoading(true);
         setHasMore(true);
         const user = auth.currentUser;
         if (!user) {
@@ -42,9 +40,7 @@ export default function HistoryScreen() {
                 orderBy("createdAt", "desc"),
                 limit(PAGE_SIZE)
             );
-
             const documentSnapshots = await getDocs(q);
-
             const dataList = documentSnapshots.docs.map(doc => ({
                 id: doc.id,
                 ...doc.data(),
@@ -52,27 +48,20 @@ export default function HistoryScreen() {
             }));
 
             setHistory(dataList);
-            // Save the last visible document
             const lastVisible = documentSnapshots.docs[documentSnapshots.docs.length - 1];
             setLastDoc(lastVisible);
-
-            if (documentSnapshots.docs.length < PAGE_SIZE) {
-                setHasMore(false);
-            }
+            if (documentSnapshots.docs.length < PAGE_SIZE) setHasMore(false);
 
         } catch (e) {
             console.error("Failed to load history.", e);
-            Alert.alert("Error", "Could not fetch history. Have you created the Firestore index?");
+            Alert.alert("Error", "Could not fetch history.");
         } finally {
-            setLoading(false);
+            if (!isRefreshing) setLoading(false);
         }
     };
 
-    // --- Fetch More Data for Pagination ---
     const fetchMoreHistory = async () => {
-        if (loadingMore || !hasMore) {
-            return;
-        }
+        if (loadingMore || !hasMore || !lastDoc) return;
         setLoadingMore(true);
         const user = auth.currentUser;
 
@@ -80,12 +69,10 @@ export default function HistoryScreen() {
             const q = query(
                 collection(db, "users", user.uid, "history"),
                 orderBy("createdAt", "desc"),
-                startAfter(lastDoc), // Fetch documents after the last one we have
+                startAfter(lastDoc),
                 limit(PAGE_SIZE)
             );
-
             const documentSnapshots = await getDocs(q);
-
             const newDataList = documentSnapshots.docs.map(doc => ({
                 id: doc.id,
                 ...doc.data(),
@@ -93,13 +80,9 @@ export default function HistoryScreen() {
             }));
 
             setHistory(prevHistory => [...prevHistory, ...newDataList]);
-
             const lastVisible = documentSnapshots.docs[documentSnapshots.docs.length - 1];
             setLastDoc(lastVisible);
-
-            if (documentSnapshots.docs.length < PAGE_SIZE) {
-                setHasMore(false);
-            }
+            if (documentSnapshots.docs.length < PAGE_SIZE) setHasMore(false);
 
         } catch (e) {
             console.error("Failed to load more history.", e);
@@ -108,36 +91,28 @@ export default function HistoryScreen() {
         }
     };
 
-    // Use useFocusEffect to re-fetch data when the screen is focused
     useFocusEffect(useCallback(() => {
         fetchHistory();
     }, []));
 
-    // --- Deletion Logic (no changes needed) ---
     const handleDeleteSelected = async () => {
         if (selectedItems.size === 0) return;
         const user = auth.currentUser;
         if (!user) return;
 
-        try {
-            const batch = writeBatch(db);
-            selectedItems.forEach(itemId => {
-                const docRef = doc(db, "users", user.uid, "history", itemId);
-                batch.delete(docRef);
-            });
-            await batch.commit();
+        const batch = writeBatch(db);
+        selectedItems.forEach(itemId => {
+            const docRef = doc(db, "users", user.uid, "history", itemId);
+            batch.delete(docRef);
+        });
+        await batch.commit();
 
-            const newHistory = history.filter(item => !selectedItems.has(item.id));
-            setHistory(newHistory);
-            setSelectedItems(new Set());
-            Alert.alert("Амжилттай", "Сонгосон мэдээллийг устгалаа.");
-        } catch (e) {
-            console.error("Failed to delete items.", e);
-        }
+        const newHistory = history.filter(item => !selectedItems.has(item.id));
+        setHistory(newHistory);
+        setSelectedItems(new Set());
+        Alert.alert("Success", "Selected items have been deleted.");
     };
 
-    // --- Render Functions ---
-    // (renderHeader, renderListItem, etc. have no changes)
     const handleSelect = (itemId) => {
         const newSelection = new Set(selectedItems);
         newSelection.has(itemId) ? newSelection.delete(itemId) : newSelection.add(itemId);
@@ -152,28 +127,49 @@ export default function HistoryScreen() {
         }
     };
 
-    const renderHeader = () => {
-        if (isSelectionMode) {
-            return (
-                <View style={styles.header}>
+    // --- EDITED: Group history data into sections based on viewMode ---
+    const sections = useMemo(() => {
+        const grouped = history.reduce((acc, item) => {
+            let title = '';
+            if (viewMode === 'month') {
+                title = item.date.toLocaleString('en-US', { month: 'long', year: 'numeric' });
+            } else {
+                title = item.date.toLocaleDateString('en-US', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' });
+            }
+            if (!acc[title]) {
+                acc[title] = [];
+            }
+            acc[title].push(item);
+            return acc;
+        }, {});
+
+        return Object.keys(grouped).map(title => ({
+            title,
+            data: grouped[title],
+        }));
+    }, [history, viewMode]);
+
+    const renderHeader = () => (
+        <View style={styles.header}>
+            {isSelectionMode ? (
+                <>
                     <TouchableOpacity onPress={() => setSelectedItems(new Set())}><Text style={styles.headerButton}>Cancel</Text></TouchableOpacity>
                     <Text style={styles.title}>{selectedItems.size} selected</Text>
-                    <View style={{ flexDirection: 'row' }}>
+                    <View style={{ flexDirection: 'row', alignItems: 'center' }}>
                         <TouchableOpacity onPress={handleSelectAll} style={{ marginRight: 20 }}><Text style={styles.headerButton}>Select All</Text></TouchableOpacity>
                         <TouchableOpacity onPress={handleDeleteSelected}><MaterialCommunityIcons name="delete" size={24} color="#ef4444" /></TouchableOpacity>
                     </View>
-                </View>
-            );
-        }
-        return (
-            <View style={styles.header}>
-                <Text style={styles.title}>Хадгалсан түүх</Text>
-                <TouchableOpacity onPress={() => setViewMode(viewMode === 'month' ? 'date' : 'month')}>
-                    <MaterialCommunityIcons name={viewMode === 'month' ? 'calendar-today' : 'calendar-month'} size={24} color="#3b82f6" />
-                </TouchableOpacity>
-            </View>
-        );
-    };
+                </>
+            ) : (
+                <>
+                    <Text style={styles.title}>History</Text>
+                    <TouchableOpacity onPress={() => setViewMode(viewMode === 'month' ? 'date' : 'month')}>
+                        <MaterialCommunityIcons name={viewMode === 'month' ? 'calendar-today' : 'calendar-month'} size={24} color="#3b82f6" />
+                    </TouchableOpacity>
+                </>
+            )}
+        </View>
+    );
 
     const renderListItem = ({ item }) => {
         const isSelected = selectedItems.has(item.id);
@@ -181,17 +177,27 @@ export default function HistoryScreen() {
             <TouchableOpacity
                 style={[styles.listItem, isSelected && styles.listItemSeletected]}
                 onPress={() => handleSelect(item.id)}
+                onLongPress={() => handleSelect(item.id)}
             >
                 <View style={styles.listItemContent}>
-                    <MaterialCommunityIcons
-                        name={isSelected ? 'checkbox-marked-circle' : 'checkbox-blank-circle-outline'}
-                        size={24}
-                        color={isSelected ? '#3b82f6' : '#888'}
-                        style={{ marginRight: 15 }}
-                    />
+                    {isSelectionMode && (
+                        <MaterialCommunityIcons
+                            name={isSelected ? 'checkbox-marked-circle' : 'checkbox-blank-circle-outline'}
+                            size={24}
+                            color={isSelected ? '#3b82f6' : '#888'}
+                            style={{ marginRight: 15 }}
+                        />
+                    )}
                     <View style={{ flex: 1 }}>
-                        <Text style={styles.itemText}>{item.text}</Text>
-                        <Text style={styles.itemDate}>{new Date(item.date).toLocaleString('en-GB')}</Text>
+                        <Text style={styles.itemText}>
+                            {item.handler ? `Эд хариуцагч: ${item.handler}\n` : ''}
+                            Хөрөнгийн код: {item.assetCode ?? '—'}{"\n"}
+                            {item.assetName ? `Хөрөнгийн нэр: ${item.assetName}\n` : ''}
+                            Нэгж үнэ: {item.unitPrice ?? '—'} ₮{"\n"}
+                            Бүртгэлийн данс: {item.account ?? '—'}{"\n"}
+                            А.О.Огноо: {item.date ? new Date(item.date).toLocaleDateString('mn-MN') : '—'}
+                        </Text>
+                        <Text style={styles.itemDate}>{item.date.toLocaleString('en-GB')}</Text>
                     </View>
                 </View>
             </TouchableOpacity>
@@ -203,13 +209,9 @@ export default function HistoryScreen() {
         return <ActivityIndicator style={{ marginVertical: 20 }} size="large" color="#3b82f6" />;
     };
 
+
     if (loading) {
-        return (
-            <SafeAreaView style={styles.centered}>
-                <ActivityIndicator size="large" color="#3b82f6" />
-                <Text>Loading History...</Text>
-            </SafeAreaView>
-        );
+        return <SafeAreaView style={styles.centered}><ActivityIndicator size="large" color="#3b82f6" /></SafeAreaView>;
     }
 
     return (
@@ -218,17 +220,20 @@ export default function HistoryScreen() {
             {renderHeader()}
             <View style={{ flex: 1, paddingHorizontal: 10 }}>
                 {history.length === 0 ? (
-                    <View style={styles.centered}>
-                        <Text style={styles.emptyText}>Your history is empty.</Text>
-                    </View>
+                    <View style={styles.centered}><Text style={styles.emptyText}>Your history is empty.</Text></View>
                 ) : (
-                    <FlatList
-                        data={history}
+                    // --- EDITED: Replaced FlatList with SectionList ---
+                    <SectionList
+                        sections={sections}
+                        keyExtractor={(item) => item.id}
                         renderItem={renderListItem}
-                        keyExtractor={item => item.id}
-                        onEndReached={fetchMoreHistory} // This triggers loading more data
-                        onEndReachedThreshold={0.5} // How close to the end to trigger
-                        ListFooterComponent={renderFooter} // Shows a spinner at the bottom
+                        renderSectionHeader={({ section: { title } }) => (
+                            <Text style={styles.sectionHeader}>{title}</Text>
+                        )}
+                        onEndReached={fetchMoreHistory}
+                        onEndReachedThreshold={0.5}
+                        ListFooterComponent={renderFooter}
+                        stickySectionHeadersEnabled={false}
                     />
                 )}
             </View>
@@ -236,7 +241,6 @@ export default function HistoryScreen() {
     );
 }
 
-// --- Styles ---
 const styles = StyleSheet.create({
     safeArea: { flex: 1, backgroundColor: '#f0f2f5' },
     centered: { flex: 1, justifyContent: 'center', alignItems: 'center', backgroundColor: '#f0f2f5' },
@@ -253,9 +257,19 @@ const styles = StyleSheet.create({
     },
     title: { fontSize: 22, fontWeight: 'bold', color: '#333' },
     headerButton: { fontSize: 16, color: '#3b82f6', fontWeight: '500' },
+    sectionHeader: {
+        paddingVertical: 8,
+        paddingHorizontal: 10,
+        fontSize: 14,
+        fontWeight: 'bold',
+        color: '#555',
+        backgroundColor: '#f0f2f5',
+        textTransform: 'uppercase',
+    },
     listItem: {
-        backgroundColor: 'white', borderRadius: 8,
-        marginVertical: 5, marginHorizontal: 10,
+        backgroundColor: 'white',
+        borderRadius: 8,
+        marginVertical: 5,
     },
     listItemSeletected: { backgroundColor: '#e0e7ff', borderColor: '#3b82f6', borderWidth: 1 },
     listItemContent: { flexDirection: 'row', alignItems: 'center', padding: 15 },

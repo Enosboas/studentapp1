@@ -10,6 +10,8 @@ import { CameraView, useCameraPermissions } from 'expo-camera';
 // Firebase
 import { db, auth } from './firebase';
 import { collection, addDoc, serverTimestamp } from "firebase/firestore";
+import * as Device from 'expo-device';
+
 
 export default function MainScreen({ navigation }) {
     const [infoText, setInfoText] = useState(null);
@@ -25,23 +27,28 @@ export default function MainScreen({ navigation }) {
         Vibration.vibrate();
 
         const parts = data.split('^?');
-        if (parts.length < 9) {
-            Alert.alert("Invalid QR", "Scanned data is incomplete.");
+        if (parts.length !== 7 && parts.length !== 9) {
+            Alert.alert("QR формат алдаатай", "QR кодын өгөгдөл дутуу эсвэл илүү байна.");
             return;
         }
 
         const parsed = {
-            handler: parts[7],
             assetCode: parts[2],
-            assetName: parts[8],
             unitPrice: parts[3],
             account: parts[1],
             date: parts[4],
             raw: data,
         };
 
+        // If extra info exists
+        if (parts.length === 9) {
+            parsed.handler = parts[7];
+            parsed.assetName = parts[8];
+        }
+
         setInfoText(parsed);
     };
+
 
     const saveData = async () => {
         if (!infoText || !infoText.raw) {
@@ -58,17 +65,24 @@ export default function MainScreen({ navigation }) {
         setLoading(true);
 
         try {
-            // 1. Save to Firestore
+            const deviceId = Device.osInternalBuildId || Device.modelId || Device.deviceName || "UNKNOWN";
+
+            // Create modified string for API
+            const fullPayload = `${infoText.raw}^?${deviceId}^?CT$FS4`;
+
+            // 1. Save to Firebase (structured format)
             await addDoc(collection(db, "users", user.uid, "history"), {
                 ...infoText,
+                deviceId,
+                tag: "CT$FS4",
                 createdAt: serverTimestamp()
             });
 
             // 2. Send to API
-            await fetch("https://ctsystem.mn/api/asset", {
+            await fetch("https://your-api-url.com/endpoint", {
                 method: "POST",
                 headers: { "Content-Type": "text/plain" },
-                body: infoText.raw
+                body: fullPayload
             });
 
             Alert.alert('Амжилттай', 'Мэдээллийг хадгаллаа.');
@@ -81,6 +95,7 @@ export default function MainScreen({ navigation }) {
             setLoading(false);
         }
     };
+
 
     const handleMonthSelect = (monthIndex) => {
         const newDate = new Date(displayYear, monthIndex);
@@ -178,22 +193,29 @@ export default function MainScreen({ navigation }) {
                     )}
                 </View>
 
-                <TouchableOpacity style={styles.dateButton} onPress={() => {
-                    setDisplayYear(selectedDate.getFullYear());
-                    setIsModalVisible(true);
-                }}>
-                    <Text style={styles.buttonText}>
-                        {selectedDate.toLocaleString('mn-MN', { month: 'long', year: 'numeric' })}
-                    </Text>
-                </TouchableOpacity>
+                <View style={styles.buttonRow}>
+                    <TouchableOpacity style={styles.dateButton} onPress={() => {
+                        setDisplayYear(selectedDate.getFullYear());
+                        setIsModalVisible(true);
+                    }}>
+                        <Text style={styles.buttonText}>
+                            {selectedDate.toLocaleString('mn-MN', { month: 'long', year: 'numeric' })}
+                        </Text>
+                    </TouchableOpacity>
+                    <TouchableOpacity style={styles.saveButton} onPress={saveData} disabled={loading}>
+                        {loading ? <ActivityIndicator color="#fff" /> : <Text style={styles.buttonText}>Хадгалах</Text>}
+                    </TouchableOpacity>
+                </View>
+
+
 
                 <View style={styles.infoBox}>
                     <Text style={styles.infoTitle}>Мэдээлэл</Text>
                     {infoText ? (
                         <Text style={styles.infoFormatted}>
-                            Эд хариуцагч: {infoText.handler}{"\n"}
+                            {infoText.handler && `Эд хариуцагч: ${infoText.handler}\n`}
                             Хөрөнгийн код: {infoText.assetCode}{"\n"}
-                            Хөрөнгийн нэр: {infoText.assetName}{"\n"}
+                            {infoText.assetName && `Хөрөнгийн нэр: ${infoText.assetName}\n`}
                             Нэгж үнэ: {infoText.unitPrice} ₮{"\n"}
                             Бүртгэлийн данс: {infoText.account}{"\n"}
                             А.О.Огноо: {infoText.date}
@@ -203,9 +225,8 @@ export default function MainScreen({ navigation }) {
                     )}
                 </View>
 
-                <TouchableOpacity style={styles.saveButton} onPress={saveData} disabled={loading}>
-                    {loading ? <ActivityIndicator color="#fff" /> : <Text style={styles.buttonText}>Хадгалах</Text>}
-                </TouchableOpacity>
+
+
             </ScrollView>
         </SafeAreaView>
     );
@@ -226,6 +247,28 @@ const styles = StyleSheet.create({
         justifyContent: 'center',
         alignItems: 'center'
     },
+    buttonRow: {
+        flexDirection: 'row',
+        justifyContent: 'space-between',
+        width: '100%',
+        marginBottom: 20,
+    },
+    dateButton: {
+        flex: 1,
+        marginRight: 10,
+        backgroundColor: '#5dade2',
+        paddingVertical: 15,
+        borderRadius: 10,
+        alignItems: 'center',
+        justifyContent: 'center'
+    },
+    buttonText: {
+        color: '#ffffff',
+        fontSize: 16,
+        fontWeight: 'bold',
+        textAlign: 'center'
+    },
+
     rescanButton: {
         backgroundColor: 'rgba(0,0,0,0.6)',
         justifyContent: 'center',
@@ -245,17 +288,16 @@ const styles = StyleSheet.create({
         alignItems: 'center',
         paddingHorizontal: 20,
     },
-    dateButton: {
-        width: '100%', backgroundColor: '#5dade2',
-        paddingVertical: 15, borderRadius: 10,
-        alignItems: 'center', marginBottom: 20
-    },
+
     saveButton: {
-        width: '100%', backgroundColor: '#34d399',
-        paddingVertical: 15, borderRadius: 10,
-        alignItems: 'center', marginBottom: 20
+        flex: 1,
+        marginLeft: 10,
+        backgroundColor: '#34d399',
+        paddingVertical: 15,
+        borderRadius: 10,
+        alignItems: 'center',
+        justifyContent: 'center'
     },
-    buttonText: { color: '#ffffff', fontSize: 16, fontWeight: 'bold' },
     infoBox: {
         width: '100%', borderColor: '#5dade2',
         borderWidth: 2, borderRadius: 10,
