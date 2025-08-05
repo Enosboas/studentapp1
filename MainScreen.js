@@ -1,55 +1,82 @@
 import React, { useState } from 'react';
 import {
-    StyleSheet, Text, View, TextInput, TouchableOpacity,
-    SafeAreaView, ScrollView, StatusBar, Alert, Modal, ActivityIndicator, Vibration, Button
+    StyleSheet, Text, View, TouchableOpacity,
+    SafeAreaView, ScrollView, StatusBar, Alert, Modal,
+    ActivityIndicator, Vibration, Button
 } from 'react-native';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
-// --- CORRECTED: Use CameraView and the permissions hook from expo-camera ---
 import { CameraView, useCameraPermissions } from 'expo-camera';
 
-// Firebase Imports
+// Firebase
 import { db, auth } from './firebase';
 import { collection, addDoc, serverTimestamp } from "firebase/firestore";
 
 export default function MainScreen({ navigation }) {
-    const [infoText, setInfoText] = useState('');
+    const [infoText, setInfoText] = useState(null);
     const [loading, setLoading] = useState(false);
-    // --- CORRECTED: Use the modern permissions hook ---
     const [permission, requestPermission] = useCameraPermissions();
     const [scanned, setScanned] = useState(false);
     const [selectedDate, setSelectedDate] = useState(new Date());
     const [isModalVisible, setIsModalVisible] = useState(false);
     const [displayYear, setDisplayYear] = useState(new Date().getFullYear());
 
-    // Handle Barcode Scanning
     const handleBarCodeScanned = ({ data }) => {
         setScanned(true);
-        setInfoText(data);
         Vibration.vibrate();
+
+        const parts = data.split('^?');
+        if (parts.length < 9) {
+            Alert.alert("Invalid QR", "Scanned data is incomplete.");
+            return;
+        }
+
+        const parsed = {
+            handler: parts[7],
+            assetCode: parts[2],
+            assetName: parts[8],
+            unitPrice: parts[3],
+            account: parts[1],
+            date: parts[4],
+            raw: data,
+        };
+
+        setInfoText(parsed);
     };
 
     const saveData = async () => {
-        if (infoText.trim() === '') {
-            Alert.alert('Empty', 'There is no information to save.');
+        if (!infoText || !infoText.raw) {
+            Alert.alert('Хоосон мэдээлэл', 'Хадгалах мэдээлэл олдсонгүй.');
             return;
         }
+
         const user = auth.currentUser;
         if (!user) {
-            Alert.alert("Authentication Error", "You must be logged in to save data.");
+            Alert.alert("Нэвтрээгүй", "Та нэвтэрч орно уу.");
             return;
         }
+
         setLoading(true);
+
         try {
+            // 1. Save to Firestore
             await addDoc(collection(db, "users", user.uid, "history"), {
-                text: infoText,
+                ...infoText,
                 createdAt: serverTimestamp()
             });
-            Alert.alert('Success', 'Information saved successfully.');
-            setInfoText('');
+
+            // 2. Send to API
+            await fetch("https://ctsystem.mn/api/asset", {
+                method: "POST",
+                headers: { "Content-Type": "text/plain" },
+                body: infoText.raw
+            });
+
+            Alert.alert('Амжилттай', 'Мэдээллийг хадгаллаа.');
+            setInfoText(null);
             setScanned(false);
         } catch (e) {
-            console.error("Error adding document: ", e);
-            Alert.alert('Error', 'Could not save the information.');
+            console.error("Error saving data: ", e);
+            Alert.alert('Алдаа', 'Мэдээллийг хадгалах үед алдаа гарлаа.');
         } finally {
             setLoading(false);
         }
@@ -62,7 +89,8 @@ export default function MainScreen({ navigation }) {
     };
 
     const MonthPickerModal = () => {
-        const months = ["January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December"];
+        const months = ["January", "February", "March", "April", "May", "June",
+            "July", "August", "September", "October", "November", "December"];
         const currentYear = new Date().getFullYear();
         const currentMonth = new Date().getMonth();
 
@@ -121,17 +149,11 @@ export default function MainScreen({ navigation }) {
         );
     };
 
-    // --- CORRECTED: Handle new permission flow ---
-    if (!permission) {
-        // Camera permissions are still loading
-        return <View />;
-    }
-
+    if (!permission) return <View />;
     if (!permission.granted) {
-        // Camera permissions are not granted yet
         return (
             <View style={styles.centerText}>
-                <Text style={{textAlign: 'center', marginBottom: 10}}>We need your permission to show the camera.</Text>
+                <Text style={{ textAlign: 'center', marginBottom: 10 }}>Camera permission is required.</Text>
                 <Button onPress={requestPermission} title="Grant Permission" />
             </View>
         );
@@ -143,18 +165,15 @@ export default function MainScreen({ navigation }) {
             <MonthPickerModal />
             <ScrollView contentContainerStyle={styles.container}>
                 <View style={styles.cameraContainer}>
-                    {/* --- CORRECTED: Use CameraView component and props --- */}
                     <CameraView
                         onBarcodeScanned={scanned ? undefined : handleBarCodeScanned}
-                        barcodeScannerSettings={{
-                            barcodeTypes: ['qr'],
-                        }}
+                        barcodeScannerSettings={{ barcodeTypes: ['qr'] }}
                         style={StyleSheet.absoluteFillObject}
                     />
                     {scanned && (
                         <TouchableOpacity style={styles.rescanButton} onPress={() => setScanned(false)}>
                             <MaterialCommunityIcons name="qrcode-scan" size={40} color="#fff" />
-                            <Text style={styles.rescanButtonText}>Scan Again</Text>
+                            <Text style={styles.rescanButtonText}>Дахин унших</Text>
                         </TouchableOpacity>
                     )}
                 </View>
@@ -164,25 +183,28 @@ export default function MainScreen({ navigation }) {
                     setIsModalVisible(true);
                 }}>
                     <Text style={styles.buttonText}>
-                        {selectedDate.toLocaleString('en-US', { month: 'long', year: 'numeric' })}
+                        {selectedDate.toLocaleString('mn-MN', { month: 'long', year: 'numeric' })}
                     </Text>
                 </TouchableOpacity>
 
                 <View style={styles.infoBox}>
-                    <Text style={styles.infoTitle}>Information</Text>
-                    <TextInput
-                        style={styles.infoInput}
-                        multiline
-                        numberOfLines={6}
-                        textAlignVertical="top"
-                        value={infoText}
-                        onChangeText={setInfoText}
-                        placeholder="Scanned QR code data will appear here..."
-                    />
+                    <Text style={styles.infoTitle}>Мэдээлэл</Text>
+                    {infoText ? (
+                        <Text style={styles.infoFormatted}>
+                            Эд хариуцагч: {infoText.handler}{"\n"}
+                            Хөрөнгийн код: {infoText.assetCode}{"\n"}
+                            Хөрөнгийн нэр: {infoText.assetName}{"\n"}
+                            Нэгж үнэ: {infoText.unitPrice} ₮{"\n"}
+                            Бүртгэлийн данс: {infoText.account}{"\n"}
+                            А.О.Огноо: {infoText.date}
+                        </Text>
+                    ) : (
+                        <Text style={styles.placeholderText}>QR уншуулсан мэдээлэл энд харагдана.</Text>
+                    )}
                 </View>
 
                 <TouchableOpacity style={styles.saveButton} onPress={saveData} disabled={loading}>
-                    {loading ? <ActivityIndicator color="#fff" /> : <Text style={styles.buttonText}>Save</Text>}
+                    {loading ? <ActivityIndicator color="#fff" /> : <Text style={styles.buttonText}>Хадгалах</Text>}
                 </TouchableOpacity>
             </ScrollView>
         </SafeAreaView>
@@ -223,60 +245,51 @@ const styles = StyleSheet.create({
         alignItems: 'center',
         paddingHorizontal: 20,
     },
-    dateButton: { width: '100%', backgroundColor: '#5dade2', paddingVertical: 15, borderRadius: 10, alignItems: 'center', marginBottom: 20 },
-    saveButton: { width: '100%', backgroundColor: '#34d399', paddingVertical: 15, borderRadius: 10, alignItems: 'center', marginBottom: 20 },
+    dateButton: {
+        width: '100%', backgroundColor: '#5dade2',
+        paddingVertical: 15, borderRadius: 10,
+        alignItems: 'center', marginBottom: 20
+    },
+    saveButton: {
+        width: '100%', backgroundColor: '#34d399',
+        paddingVertical: 15, borderRadius: 10,
+        alignItems: 'center', marginBottom: 20
+    },
     buttonText: { color: '#ffffff', fontSize: 16, fontWeight: 'bold' },
-    infoBox: { width: '100%', borderColor: '#5dade2', borderWidth: 2, borderRadius: 10, padding: 15, backgroundColor: '#ffffff', marginBottom: 20 },
-    infoTitle: { fontSize: 20, fontWeight: 'bold', textAlign: 'center', marginBottom: 10, color: '#333' },
-    infoInput: { height: 150, fontSize: 16, color: '#333' },
+    infoBox: {
+        width: '100%', borderColor: '#5dade2',
+        borderWidth: 2, borderRadius: 10,
+        padding: 15, backgroundColor: '#ffffff',
+        marginBottom: 20
+    },
+    infoTitle: {
+        fontSize: 20, fontWeight: 'bold',
+        textAlign: 'center', marginBottom: 10, color: '#333'
+    },
+    infoFormatted: { fontSize: 16, color: '#333', lineHeight: 26 },
+    placeholderText: { color: '#999', fontStyle: 'italic' },
     modalContainer: {
-        flex: 1,
-        justifyContent: 'center',
-        alignItems: 'center',
-        backgroundColor: 'rgba(0,0,0,0.5)',
+        flex: 1, justifyContent: 'center',
+        alignItems: 'center', backgroundColor: 'rgba(0,0,0,0.5)',
     },
     modalContent: {
-        width: '85%',
-        backgroundColor: 'white',
-        borderRadius: 10,
-        padding: 20,
-        alignItems: 'center',
+        width: '85%', backgroundColor: 'white',
+        borderRadius: 10, padding: 20, alignItems: 'center',
     },
     yearHeader: {
-        width: '100%',
-        flexDirection: 'row',
-        justifyContent: 'space-between',
-        alignItems: 'center',
-        marginBottom: 15,
+        width: '100%', flexDirection: 'row',
+        justifyContent: 'space-between', alignItems: 'center', marginBottom: 15,
     },
-    modalTitle: {
-        fontSize: 22,
-        fontWeight: 'bold',
-    },
+    modalTitle: { fontSize: 22, fontWeight: 'bold' },
     monthItem: {
-        width: '100%',
-        paddingVertical: 10,
-        alignItems: 'center',
-        borderBottomWidth: 1,
-        borderBottomColor: '#eee',
+        width: '100%', paddingVertical: 10,
+        alignItems: 'center', borderBottomWidth: 1, borderBottomColor: '#eee',
     },
-    monthText: {
-        fontSize: 18,
-        color: '#3b82f6',
-    },
-    disabledMonthText: {
-        color: '#ccc',
-    },
+    monthText: { fontSize: 18, color: '#3b82f6' },
+    disabledMonthText: { color: '#ccc' },
     closeButton: {
-        marginTop: 20,
-        backgroundColor: '#ef4444',
-        paddingVertical: 10,
-        paddingHorizontal: 30,
-        borderRadius: 8,
+        marginTop: 20, backgroundColor: '#ef4444',
+        paddingVertical: 10, paddingHorizontal: 30, borderRadius: 8,
     },
-    closeButtonText: {
-        color: 'white',
-        fontSize: 16,
-        fontWeight: 'bold',
-    },
+    closeButtonText: { color: 'white', fontSize: 16, fontWeight: 'bold' },
 });

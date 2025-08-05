@@ -1,7 +1,7 @@
 {
   "expo": {
     "name": "QR History",
-    "slug": "qr-history",
+    "slug": "orgil",
     "version": "1.0.0",
     "orientation": "portrait",
     "icon": "./assets/icon.png",
@@ -34,8 +34,9 @@
     ],
     "extra": {
       "eas": {
-        "projectId": "4281b089-7571-4d3e-8081-50e4a88095ad"
+        "projectId": "84d9c646-1d9a-4af9-b820-6192f71c7d04"
       }
-    }
+    },
+    "owner": "enosboas"
   }
 }
