@@ -1,67 +1,60 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState } from 'react';
 import {
     StyleSheet, Text, View, TextInput, TouchableOpacity,
-    SafeAreaView, ScrollView, StatusBar, Alert, Modal, ActivityIndicator
+    SafeAreaView, ScrollView, StatusBar, Alert, Modal, ActivityIndicator, Vibration, Button
 } from 'react-native';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
+// --- CORRECTED: Use CameraView and the permissions hook from expo-camera ---
+import { CameraView, useCameraPermissions } from 'expo-camera';
 
-// --- Firebase Imports ---
-import { db, auth } from './firebase'; // Import your db and auth objects
+// Firebase Imports
+import { db, auth } from './firebase';
 import { collection, addDoc, serverTimestamp } from "firebase/firestore";
 
-export default function MainScreen({ navigation, route }) {
+export default function MainScreen({ navigation }) {
     const [infoText, setInfoText] = useState('');
     const [loading, setLoading] = useState(false);
-
-    // The modal logic can remain the same if you still want to manually select a date.
-    // However, using serverTimestamp is more reliable.
+    // --- CORRECTED: Use the modern permissions hook ---
+    const [permission, requestPermission] = useCameraPermissions();
+    const [scanned, setScanned] = useState(false);
     const [selectedDate, setSelectedDate] = useState(new Date());
     const [isModalVisible, setIsModalVisible] = useState(false);
     const [displayYear, setDisplayYear] = useState(new Date().getFullYear());
 
-    useEffect(() => {
-        if (route.params?.scannedData) {
-            setInfoText(route.params.scannedData);
-        }
-    }, [route.params?.scannedData]);
+    // Handle Barcode Scanning
+    const handleBarCodeScanned = ({ data }) => {
+        setScanned(true);
+        setInfoText(data);
+        Vibration.vibrate();
+    };
 
     const saveData = async () => {
         if (infoText.trim() === '') {
-            Alert.alert('Хоосон', 'Хадгалах мэдээлэл байхгүй байна.');
+            Alert.alert('Empty', 'There is no information to save.');
             return;
         }
-
-        // Get the currently logged-in user from Firebase Auth
         const user = auth.currentUser;
         if (!user) {
             Alert.alert("Authentication Error", "You must be logged in to save data.");
-            // Optionally navigate to login screen
-            // navigation.navigate('LoginScreen');
             return;
         }
-
         setLoading(true);
         try {
-            // --- Save Data to Firestore ---
-            // This creates a document in a subcollection 'history' under the user's ID
-            // ensuring that each user's data is private.
-            const docRef = await addDoc(collection(db, "users", user.uid, "history"), {
+            await addDoc(collection(db, "users", user.uid, "history"), {
                 text: infoText,
-                // serverTimestamp provides a reliable, server-generated date
                 createdAt: serverTimestamp()
             });
-
-            Alert.alert('Амжилттай', 'Мэдээллийг амжилттай хадгаллаа.');
-            setInfoText(''); // Clear input after saving
+            Alert.alert('Success', 'Information saved successfully.');
+            setInfoText('');
+            setScanned(false);
         } catch (e) {
             console.error("Error adding document: ", e);
-            Alert.alert('Алдаа', 'Мэдээлэл хадгалж чадсангүй.');
+            Alert.alert('Error', 'Could not save the information.');
         } finally {
             setLoading(false);
         }
     };
 
-    // --- Month Picker Modal (No changes needed here) ---
     const handleMonthSelect = (monthIndex) => {
         const newDate = new Date(displayYear, monthIndex);
         setSelectedDate(newDate);
@@ -128,21 +121,45 @@ export default function MainScreen({ navigation, route }) {
         );
     };
 
+    // --- CORRECTED: Handle new permission flow ---
+    if (!permission) {
+        // Camera permissions are still loading
+        return <View />;
+    }
+
+    if (!permission.granted) {
+        // Camera permissions are not granted yet
+        return (
+            <View style={styles.centerText}>
+                <Text style={{textAlign: 'center', marginBottom: 10}}>We need your permission to show the camera.</Text>
+                <Button onPress={requestPermission} title="Grant Permission" />
+            </View>
+        );
+    }
 
     return (
         <SafeAreaView style={styles.safeArea}>
             <StatusBar barStyle="dark-content" />
             <MonthPickerModal />
             <ScrollView contentContainerStyle={styles.container}>
-                <TouchableOpacity
-                    style={styles.imagePlaceholder}
-                    onPress={() => navigation.navigate('QRScannerScreen')}
-                >
-                    <MaterialCommunityIcons name="qrcode-scan" size={80} color="#fff" />
-                    <Text style={styles.placeholderText}>Scan QR Code</Text>
-                </TouchableOpacity>
+                <View style={styles.cameraContainer}>
+                    {/* --- CORRECTED: Use CameraView component and props --- */}
+                    <CameraView
+                        onBarcodeScanned={scanned ? undefined : handleBarCodeScanned}
+                        barcodeScannerSettings={{
+                            barcodeTypes: ['qr'],
+                        }}
+                        style={StyleSheet.absoluteFillObject}
+                    />
+                    {scanned && (
+                        <TouchableOpacity style={styles.rescanButton} onPress={() => setScanned(false)}>
+                            <MaterialCommunityIcons name="qrcode-scan" size={40} color="#fff" />
+                            <Text style={styles.rescanButtonText}>Scan Again</Text>
+                        </TouchableOpacity>
+                    )}
+                </View>
 
-                <TouchableOpacity style={styles.button} onPress={() => {
+                <TouchableOpacity style={styles.dateButton} onPress={() => {
                     setDisplayYear(selectedDate.getFullYear());
                     setIsModalVisible(true);
                 }}>
@@ -152,7 +169,7 @@ export default function MainScreen({ navigation, route }) {
                 </TouchableOpacity>
 
                 <View style={styles.infoBox}>
-                    <Text style={styles.infoTitle}>Мэдээлэл</Text>
+                    <Text style={styles.infoTitle}>Information</Text>
                     <TextInput
                         style={styles.infoInput}
                         multiline
@@ -160,29 +177,54 @@ export default function MainScreen({ navigation, route }) {
                         textAlignVertical="top"
                         value={infoText}
                         onChangeText={setInfoText}
-                        placeholder="QR кодоос уншсан мэдээлэл энд харагдана..."
+                        placeholder="Scanned QR code data will appear here..."
                     />
                 </View>
 
-                <TouchableOpacity style={styles.button} onPress={saveData} disabled={loading}>
-                    {loading ? <ActivityIndicator color="#fff" /> : <Text style={styles.buttonText}>Хадгалах</Text>}
+                <TouchableOpacity style={styles.saveButton} onPress={saveData} disabled={loading}>
+                    {loading ? <ActivityIndicator color="#fff" /> : <Text style={styles.buttonText}>Save</Text>}
                 </TouchableOpacity>
             </ScrollView>
         </SafeAreaView>
     );
 }
 
-// --- Styles (no changes needed) ---
 const styles = StyleSheet.create({
     safeArea: { flex: 1, backgroundColor: '#f0f2f5' },
     container: { flexGrow: 1, alignItems: 'center', padding: 20 },
-    imagePlaceholder: {
-        width: 200, height: 200, backgroundColor: '#000000',
-        borderRadius: 10, borderWidth: 3, borderColor: '#5dade2',
-        marginBottom: 30, justifyContent: 'center', alignItems: 'center',
+    cameraContainer: {
+        width: 250,
+        height: 250,
+        overflow: 'hidden',
+        borderRadius: 10,
+        borderWidth: 3,
+        borderColor: '#5dade2',
+        marginBottom: 30,
+        backgroundColor: '#000',
+        justifyContent: 'center',
+        alignItems: 'center'
     },
-    placeholderText: { color: '#fff', marginTop: 10, fontSize: 16, fontWeight: 'bold' },
-    button: { width: '100%', backgroundColor: '#5dade2', paddingVertical: 15, borderRadius: 10, alignItems: 'center', marginBottom: 20 },
+    rescanButton: {
+        backgroundColor: 'rgba(0,0,0,0.6)',
+        justifyContent: 'center',
+        alignItems: 'center',
+        width: '100%',
+        height: '100%',
+    },
+    rescanButtonText: {
+        color: '#fff',
+        fontSize: 18,
+        fontWeight: 'bold',
+        marginTop: 10,
+    },
+    centerText: {
+        flex: 1,
+        justifyContent: 'center',
+        alignItems: 'center',
+        paddingHorizontal: 20,
+    },
+    dateButton: { width: '100%', backgroundColor: '#5dade2', paddingVertical: 15, borderRadius: 10, alignItems: 'center', marginBottom: 20 },
+    saveButton: { width: '100%', backgroundColor: '#34d399', paddingVertical: 15, borderRadius: 10, alignItems: 'center', marginBottom: 20 },
     buttonText: { color: '#ffffff', fontSize: 16, fontWeight: 'bold' },
     infoBox: { width: '100%', borderColor: '#5dade2', borderWidth: 2, borderRadius: 10, padding: 15, backgroundColor: '#ffffff', marginBottom: 20 },
     infoTitle: { fontSize: 20, fontWeight: 'bold', textAlign: 'center', marginBottom: 10, color: '#333' },

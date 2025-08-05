@@ -1,12 +1,8 @@
-import { initializeApp, getApp, getApps } from "firebase/app";
-// --- UPDATED: Import functions for persistent authentication ---
-import {
-    initializeAuth,
-    getReactNativePersistence
-} from 'firebase/auth';
+import { initializeApp } from "firebase/app";
 import { getFirestore } from "firebase/firestore";
-import { getAnalytics, isSupported } from "firebase/analytics";
-// --- Import the package you just installed ---
+
+// --- New Imports for Auth Persistence ---
+import { initializeAuth, getReactNativePersistence } from 'firebase/auth';
 import ReactNativeAsyncStorage from '@react-native-async-storage/async-storage';
 
 // Your web app's Firebase configuration
@@ -17,30 +13,18 @@ const firebaseConfig = {
     storageBucket: "qrscanner-98823.firebasestorage.app",
     messagingSenderId: "194872687531",
     appId: "1:194872687531:web:61a494c406d1c4629530ee",
-    measurementId: "G-36JEP8YK6H"
 };
 
-// --- Robust Firebase Initialization ---
-const app = !getApps().length ? initializeApp(firebaseConfig) : getApp();
+// Initialize Firebase
+const app = initializeApp(firebaseConfig);
 
-// --- Initialize Services with Persistence ---
-// This line is the critical change. It tells Firebase Auth to use
-// AsyncStorage to save the user's login state.
-const auth = initializeAuth(app, {
+// --- Initialize Firestore ---
+export const db = getFirestore(app);
+
+// --- Initialize Auth with Persistence ---
+// This will store the user's login state securely on the device.
+// Make sure you have installed the required package:
+// npx expo install @react-native-async-storage/async-storage
+export const auth = initializeAuth(app, {
     persistence: getReactNativePersistence(ReactNativeAsyncStorage)
 });
-
-const db = getFirestore(app);
-
-// --- Conditionally Initialize Analytics ---
-let analytics;
-if (typeof window !== 'undefined') {
-    isSupported().then((supported) => {
-        if (supported) {
-            analytics = getAnalytics(app);
-        }
-    });
-}
-
-// --- Export the services you need ---
-export { app, auth, db, analytics };

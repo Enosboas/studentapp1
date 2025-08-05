@@ -1,6 +1,6 @@
 {
   "cli": {
-    "version": ">= 16.17.3",
+    "version": ">= 7.6.0",
     "appVersionSource": "remote"
   },
   "build": {
@@ -13,7 +13,9 @@
     },
     "production": {
       "android": {
-        "buildType": "apk"
+        "buildType": "apk",
+        "gradleCommand": ":app:assembleRelease",
+        "image": "ubuntu-22.04-jdk-17-ndk-r25b"
       },
       "autoIncrement": true
     }

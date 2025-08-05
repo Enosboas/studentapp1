@@ -1,25 +1,15 @@
-import React, { useState, useEffect } from 'react';
-import { Text, View, StyleSheet, Button } from 'react-native';
-import { CameraView } from 'expo-camera';
+import React, { useState } from 'react';
+import { Text, View, StyleSheet, Button, Linking } from 'react-native';
+import { CameraView, useCameraPermissions } from 'expo-camera';
 
 export default function QRScannerScreen({ navigation }) {
-    const [hasPermission, setHasPermission] = useState(null);
+    // Use the modern hook for permissions. It provides more details.
+    const [permission, requestPermission] = useCameraPermissions();
     const [scanned, setScanned] = useState(false);
-
-    useEffect(() => {
-        const getCameraPermissions = async () => {
-            const { status } = await CameraView.requestCameraPermissionsAsync();
-            setHasPermission(status === 'granted');
-        };
-        getCameraPermissions();
-    }, []);
 
     const handleBarCodeScanned = (scanningResult) => {
         if (scanningResult.data) {
             setScanned(true);
-            // --- THIS IS THE MAIN CHANGE ---
-            // Navigate back to the previous screen (MainScreen) and merge the new data
-            // into its parameters. This is a cleaner way to return data.
             navigation.navigate({
                 name: 'MainScreen',
                 params: { scannedData: scanningResult.data },
@@ -28,13 +18,38 @@ export default function QRScannerScreen({ navigation }) {
         }
     };
 
-    if (hasPermission === null) {
-        return <View style={styles.centerText}><Text>Requesting for camera permission...</Text></View>;
-    }
-    if (hasPermission === false) {
-        return <View style={styles.centerText}><Text>No access to camera. Please enable it in your settings.</Text></View>;
+    // If permissions are still loading, show a loading message.
+    if (!permission) {
+        return <View />;
     }
 
+    // If permissions have not been granted yet.
+    if (!permission.granted) {
+        return (
+            <View style={styles.centerText}>
+                <Text style={{ textAlign: 'center', marginBottom: 20 }}>
+                    We need your permission to use the camera for scanning QR codes.
+                </Text>
+                {/* This button allows the user to trigger the permission dialog. */}
+                <Button onPress={requestPermission} title="Grant Permission" />
+            </View>
+        );
+    }
+
+    // If permission was explicitly denied by the user.
+    if (!permission.granted && permission.canAskAgain === false) {
+        return (
+            <View style={styles.centerText}>
+                <Text style={{ textAlign: 'center', marginBottom: 20 }}>
+                    Camera permission has been permanently denied. Please go to your device settings to enable it.
+                </Text>
+                {/* This button opens the app settings on the user's phone. */}
+                <Button onPress={() => Linking.openSettings()} title="Open Settings" />
+            </View>
+        );
+    }
+
+    // If we have permission, show the camera.
     return (
         <View style={styles.container}>
             <CameraView
@@ -54,7 +69,7 @@ export default function QRScannerScreen({ navigation }) {
     );
 }
 
-// --- Styles (no changes needed here) ---
+// --- Styles ---
 const styles = StyleSheet.create({
     container: {
         flex: 1,
@@ -65,6 +80,7 @@ const styles = StyleSheet.create({
         flex: 1,
         justifyContent: 'center',
         alignItems: 'center',
+        padding: 20,
     },
     overlay: {
         flex: 1,

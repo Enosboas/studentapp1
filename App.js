@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { View, ActivityIndicator, TouchableOpacity } from 'react-native';
+import { View, ActivityIndicator } from 'react-native';
 import { NavigationContainer } from '@react-navigation/native';
 import { createNativeStackNavigator } from '@react-navigation/native-stack';
 import { createBottomTabNavigator } from '@react-navigation/bottom-tabs';
@@ -7,19 +7,17 @@ import { MaterialCommunityIcons } from '@expo/vector-icons';
 
 // --- Firebase Imports ---
 import { onAuthStateChanged } from 'firebase/auth';
-import { auth } from './firebase'; // Ensure this path is correct
+import { auth } from './firebase';
 
+// --- Screen Imports ---
 import LoginScreen from './LoginScreen';
 import MainScreen from './MainScreen';
-import QRScannerScreen from './QRScannerScreen';
 import HistoryScreen from './HistoryScreen';
-// --- Import the new ProfileScreen ---
 import ProfileScreen from './ProfileScreen';
 
 const Tab = createBottomTabNavigator();
 const Stack = createNativeStackNavigator();
 
-// --- Main App Tabs (Updated with Profile) ---
 function MainTabNavigator() {
     return (
         <Tab.Navigator
@@ -27,6 +25,7 @@ function MainTabNavigator() {
             screenOptions={{
                 tabBarActiveTintColor: '#5dade2',
                 headerShown: false,
+                tabBarStyle: { height: 60, paddingBottom: 5 }
             }}
         >
             <Tab.Screen
@@ -43,25 +42,28 @@ function MainTabNavigator() {
                 name="MainScreen"
                 component={MainScreen}
                 options={{
-                    tabBarButton: (props) => (
-                        <TouchableOpacity
-                            {...props}
-                            style={{ top: -20, justifyContent: 'center', alignItems: 'center' }}
-                            onPress={props.onPress}
-                        >
-                            <View style={{
-                                width: 70, height: 70, borderRadius: 35, backgroundColor: '#5dade2',
-                                justifyContent: 'center', alignItems: 'center', shadowColor: '#000',
-                                shadowOffset: { width: 0, height: 4 }, shadowOpacity: 0.3, shadowRadius: 4,
-                                elevation: 5,
-                            }}>
-                                <MaterialCommunityIcons name="camera" color={'#fff'} size={30} />
-                            </View>
-                        </TouchableOpacity>
+                    tabBarLabel: '',
+                    tabBarIcon: () => (
+                        <View style={{
+                            position: 'absolute',
+                            bottom: 15,
+                            height: 60,
+                            width: 60,
+                            borderRadius: 30,
+                            backgroundColor: '#5dade2',
+                            justifyContent: 'center',
+                            alignItems: 'center',
+                            shadowColor: '#000',
+                            shadowOffset: { width: 0, height: 2 },
+                            shadowOpacity: 0.25,
+                            shadowRadius: 3.84,
+                            elevation: 5,
+                        }}>
+                            <MaterialCommunityIcons name="qrcode-scan" color={'#fff'} size={30} />
+                        </View>
                     ),
                 }}
             />
-            {/* --- New Profile Tab --- */}
             <Tab.Screen
                 name="Profile"
                 component={ProfileScreen}
@@ -76,7 +78,6 @@ function MainTabNavigator() {
     );
 }
 
-// --- Auth-aware Navigation Logic (No changes here) ---
 export default function App() {
     const [user, setUser] = useState(null);
     const [initializing, setInitializing] = useState(true);
@@ -94,7 +95,7 @@ export default function App() {
     if (initializing) {
         return (
             <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center' }}>
-                <ActivityIndicator size="large" />
+                <ActivityIndicator size="large" color="#5dade2" />
             </View>
         );
     }
@@ -103,17 +104,12 @@ export default function App() {
         <NavigationContainer>
             <Stack.Navigator>
                 {user ? (
-                    // --- User is Logged In: Show main app ---
-                    <>
-                        <Stack.Screen
-                            name="AppTabs"
-                            component={MainTabNavigator}
-                            options={{ headerShown: false }}
-                        />
-                        <Stack.Screen name="QRScannerScreen" component={QRScannerScreen} />
-                    </>
+                    <Stack.Screen
+                        name="AppTabs"
+                        component={MainTabNavigator}
+                        options={{ headerShown: false }}
+                    />
                 ) : (
-                    // --- No User: Show login screen ---
                     <Stack.Screen
                         name="LoginScreen"
                         component={LoginScreen}
