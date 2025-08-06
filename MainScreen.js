@@ -103,7 +103,7 @@ export default function MainScreen({ navigation }) {
                         dataArray = [jsonData];
                     }
 
-                 //   console.log("Final dataArray:", dataArray);
+      //             console.log("Final dataArray:", dataArray);
                  //   console.log("dataArray length:", dataArray.length);
 
                     if (dataArray.length > 0) {
