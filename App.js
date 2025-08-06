@@ -1,11 +1,16 @@
-import React from 'react';
-import { View } from 'react-native';
+import React, { useState, useEffect } from 'react';
+import { View, ActivityIndicator } from 'react-native';
 import { NavigationContainer } from '@react-navigation/native';
 import { createNativeStackNavigator } from '@react-navigation/native-stack';
 import { createBottomTabNavigator } from '@react-navigation/bottom-tabs';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 
+// --- Firebase Imports ---
+import { onAuthStateChanged } from 'firebase/auth';
+import { auth } from './firebase';
+
 // --- Screen Imports ---
+import LoginScreen from './LoginScreen';
 import MainScreen from './MainScreen';
 import HistoryScreen from './HistoryScreen';
 import ProfileScreen from './ProfileScreen';
@@ -74,14 +79,43 @@ function MainTabNavigator() {
 }
 
 export default function App() {
+    const [user, setUser] = useState(null);
+    const [initializing, setInitializing] = useState(true);
+
+    useEffect(() => {
+        const unsubscribe = onAuthStateChanged(auth, (user) => {
+            setUser(user);
+            if (initializing) {
+                setInitializing(false);
+            }
+        });
+        return unsubscribe;
+    }, []);
+
+    if (initializing) {
+        return (
+            <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center' }}>
+                <ActivityIndicator size="large" color="#5dade2" />
+            </View>
+        );
+    }
+
     return (
         <NavigationContainer>
             <Stack.Navigator>
-                <Stack.Screen
-                    name="AppTabs"
-                    component={MainTabNavigator}
-                    options={{ headerShown: false }}
-                />
+                {user ? (
+                    <Stack.Screen
+                        name="AppTabs"
+                        component={MainTabNavigator}
+                        options={{ headerShown: false }}
+                    />
+                ) : (
+                    <Stack.Screen
+                        name="LoginScreen"
+                        component={LoginScreen}
+                        options={{ headerShown: false }}
+                    />
+                )}
             </Stack.Navigator>
         </NavigationContainer>
     );

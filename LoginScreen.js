@@ -28,7 +28,7 @@ export default function LoginScreen({ navigation }) {
 
     const handleAuthentication = async () => {
         if (email.trim() === '' || password.trim() === '') {
-            Alert.alert("Мэдээлэл дутуу", "И-мэйл болон нууц үгээ оруулна уу.");
+            Alert.alert("Input Required", "Please enter both email and password.");
             return;
         }
 
@@ -40,17 +40,17 @@ export default function LoginScreen({ navigation }) {
                 await signInWithEmailAndPassword(auth, email, password);
             }
         } catch (error) {
-            let errorMessage = "Алдаа гарлаа. Дахин оролдоно уу.";
+            let errorMessage = "An error occurred. Please try again.";
             if (error.code === 'auth/email-already-in-use') {
-                errorMessage = "Энэ и-мэйл хаяг бүртгэлтэй байна.";
+                errorMessage = "This email address is already in use.";
             } else if (error.code === 'auth/invalid-email') {
-                errorMessage = "Зөв и-мэйл хаяг оруулна уу.";
+                errorMessage = "Please enter a valid email address.";
             } else if (error.code === 'auth/weak-password') {
-                errorMessage = "Нууц үг дор хаяж 6 тэмдэгттэй байх ёстой.";
+                errorMessage = "The password must be at least 6 characters long.";
             } else if (error.code === 'auth/user-not-found' || error.code === 'auth/wrong-password' || error.code === 'auth/invalid-credential') {
-                errorMessage = "И-мэйл эсвэл нууц үг буруу байна.";
+                errorMessage = "Invalid email or password. Please try again.";
             }
-            Alert.alert("Нэвтрэхэд алдаа гарлаа", errorMessage);
+            Alert.alert("Authentication Failed", errorMessage);
         } finally {
             setLoading(false);
         }
@@ -61,6 +61,7 @@ export default function LoginScreen({ navigation }) {
         <SafeAreaView style={styles.safeArea}>
             <StatusBar barStyle="dark-content" />
             <View style={styles.container}>
+                {/* --- CORRECTED IMAGE PATH --- */}
                 <Image
                     source={require('./assets/logo.png')}
                     style={styles.logo}
@@ -71,7 +72,7 @@ export default function LoginScreen({ navigation }) {
                     <MaterialCommunityIcons name="email-outline" size={22} color="#888" style={styles.icon} />
                     <TextInput
                         style={styles.input}
-                        placeholder="и-мэйл"
+                        placeholder="и-мейл"
                         placeholderTextColor="#888"
                         keyboardType="email-address"
                         autoCapitalize="none"
@@ -113,8 +114,8 @@ export default function LoginScreen({ navigation }) {
                 >
                     <Text style={styles.toggleButtonText}>
                         {isRegistering
-                            ? 'Бүртгэлтэй бол энд дарна уу'
-                            : "Бүртгэл байхгүй юу? Шинээр үүсгэх"}
+                            ? 'Already have an account? Sign In'
+                            : "Don't have an account? Sign Up"}
                     </Text>
                 </TouchableOpacity>
             </View>
