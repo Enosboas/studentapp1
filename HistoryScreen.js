@@ -129,25 +129,46 @@ export default function HistoryScreen() {
 
     // --- EDITED: Group history data into sections based on viewMode ---
     const sections = useMemo(() => {
-        const grouped = history.reduce((acc, item) => {
-            let title = '';
-            if (viewMode === 'month') {
-                title = item.date.toLocaleString('en-US', { month: 'long', year: 'numeric' });
-            } else {
-                title = item.date.toLocaleDateString('en-US', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' });
-            }
-            if (!acc[title]) {
-                acc[title] = [];
-            }
-            acc[title].push(item);
-            return acc;
-        }, {});
+        let grouped = {};
 
-        return Object.keys(grouped).map(title => ({
-            title,
-            data: grouped[title],
-        }));
+        history.forEach(item => {
+            if (viewMode === 'month') {
+                const year = item.year ?? item.date.getFullYear();
+                const month = item.month ?? (item.date.getMonth() + 1);
+                const key = `${year}-${month.toString().padStart(2, '0')}`;
+
+                if (!grouped[key]) grouped[key] = { year, month, data: [] };
+                grouped[key].data.push(item);
+            } else {
+                const title = item.date.toLocaleDateString('mn-MN', {
+                    weekday: 'long', year: 'numeric', month: 'numeric', day: 'numeric'
+                });
+
+                if (!grouped[title]) grouped[title] = { title, data: [] };
+                grouped[title].data.push(item);
+            }
+        });
+
+        if (viewMode === 'month') {
+            const sortedKeys = Object.keys(grouped).sort((a, b) => {
+                const [yearA, monthA] = a.split('-').map(Number);
+                const [yearB, monthB] = b.split('-').map(Number);
+
+                if (yearA !== yearB) return yearB - yearA;
+                return monthB - monthA;
+            });
+
+            return sortedKeys.map(key => {
+                const { year, month, data } = grouped[key];
+                const title = `${year} оны ${month}-р сар`;
+                return { title, data };
+            });
+        } else {
+            return Object.values(grouped);
+        }
     }, [history, viewMode]);
+
+
 
     const renderHeader = () => (
         <View style={styles.header}>
@@ -193,7 +214,8 @@ export default function HistoryScreen() {
                             {item.handler ? `Эд хариуцагч: ${item.handler}\n` : ''}
                             Хөрөнгийн код: {item.assetCode ?? '—'}{"\n"}
                             {item.assetName ? `Хөрөнгийн нэр: ${item.assetName}\n` : ''}
-                            Нэгж үнэ: {item.unitPrice ?? '—'} ₮{"\n"}
+                            {item.unitType ? `Хэмжих нэгж: ${item.unitType}\n` : ""}
+                            Нэгж үнэ: {item.unitPrice ? Number(item.unitPrice).toLocaleString('mn-MN') : '—'} ₮ {"\n"}
                             Бүртгэлийн данс: {item.account ?? '—'}{"\n"}
                             А.О.Огноо: {item.date ? new Date(item.date).toLocaleDateString('mn-MN') : '—'}
                         </Text>
