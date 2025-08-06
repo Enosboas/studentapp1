@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useRef } from 'react';
 import {
     StyleSheet, Text, View, TouchableOpacity,
     SafeAreaView, ScrollView, StatusBar, Alert, Modal,
@@ -6,9 +6,9 @@ import {
 } from 'react-native';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { CameraView, useCameraPermissions } from 'expo-camera';
-import { db, auth } from './firebase';
-import { collection, addDoc, serverTimestamp } from "firebase/firestore";
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import * as Device from 'expo-device';
+import { useIsFocused } from '@react-navigation/native';
 
 export default function MainScreen({ navigation }) {
     const [infoText, setInfoText] = useState(null);
@@ -18,11 +18,13 @@ export default function MainScreen({ navigation }) {
     const [selectedDate, setSelectedDate] = useState(new Date());
     const [isModalVisible, setIsModalVisible] = useState(false);
     const [displayYear, setDisplayYear] = useState(new Date().getFullYear());
+    const scanLocked = useRef(false);
+    const isFocused = useIsFocused();
 
     const handleBarCodeScanned = async ({ data }) => {
         // Prevent multiple scans by checking if already scanned
         if (scanned) return;
-
+        scanLocked.current = true;
         setScanned(true);
         Vibration.vibrate();
 
@@ -151,12 +153,6 @@ export default function MainScreen({ navigation }) {
             return;
         }
 
-        const user = auth.currentUser;
-        if (!user) {
-            Alert.alert("Нэвтрээгүй", "Та нэвтэрч орно уу.");
-            return;
-        }
-
         setLoading(true);
 
         try {
@@ -165,26 +161,35 @@ export default function MainScreen({ navigation }) {
             const month = selectedDate.getMonth() + 1;
             const fullPayload = `${infoText.raw}^?${year}^?${month}^?${deviceId}^?CT$FS4`;
 
-            await addDoc(collection(db, "users", user.uid, "history"), {
+            // 🧠 Format with quotes like the API expects
+            const formattedPayload = `"${fullPayload}"`;
+
+            // ✅ Save to AsyncStorage
+            const existing = await AsyncStorage.getItem('history');
+            const parsed = existing ? JSON.parse(existing) : [];
+
+            const newItem = {
                 ...infoText,
                 deviceId,
                 year,
                 month,
                 tag: "CT$FS4",
-                createdAt: serverTimestamp()
-            });
+                createdAt: new Date().toISOString() // Since no Firestore timestamp
+            };
 
+            parsed.unshift(newItem); // Add new to front
+            await AsyncStorage.setItem('history', JSON.stringify(parsed));
+
+            // ✅ Send to API
             await fetch("https://ctsystem.mn/api/asset", {
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
-                body: `"${fullPayload}"`
+                body: formattedPayload
             });
 
             Alert.alert('Амжилттай', 'Мэдээллийг хадгаллаа.');
             setInfoText(null);
             setScanned(false);
-            console.log("Final payload sent to API:", `"${fullPayload}"`);
-
         } catch (e) {
             console.error("Error saving data: ", e);
             Alert.alert('Алдаа', 'Мэдээллийг хадгалах үед алдаа гарлаа.');
@@ -192,6 +197,7 @@ export default function MainScreen({ navigation }) {
             setLoading(false);
         }
     };
+
 
     const handleMonthSelect = (monthIndex) => {
         const newDate = new Date(displayYear, monthIndex);
@@ -254,17 +260,23 @@ export default function MainScreen({ navigation }) {
             <MonthPickerModal />
             <ScrollView contentContainerStyle={styles.container}>
                 <View style={styles.cameraContainer}>
-                    <CameraView
-                        onBarcodeScanned={scanned ? undefined : handleBarCodeScanned}
-                        barcodeScannerSettings={{ barcodeTypes: ['qr'] }}
-                        style={StyleSheet.absoluteFillObject}
-                    />
+                    {isFocused && (
+                        <CameraView
+                            onBarcodeScanned={scanned ? undefined : handleBarCodeScanned}
+                            barcodeScannerSettings={{ barcodeTypes: ['qr'] }}
+                            style={StyleSheet.absoluteFillObject}
+                        />
+                    )}
+
                     {scanned && (
                         <TouchableOpacity
                             style={styles.rescanButton}
                             onPress={() => {
-                                setScanned(false);
-                                setInfoText(null); // Clear the info when rescanning
+                                setInfoText(null);
+                                setTimeout(() => {
+                                    scanLocked.current = false;  // 🔓 Unlock scanning
+                                    setScanned(false);           // Re-enable UI
+                                }, 300);// Clear the info when rescanning
                             }}
                         >
                             <MaterialCommunityIcons name="qrcode-scan" size={40} color="#fff" />
