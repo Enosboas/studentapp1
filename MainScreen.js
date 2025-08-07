@@ -22,7 +22,6 @@ export default function MainScreen({ navigation }) {
     const isFocused = useIsFocused();
 
     const handleBarCodeScanned = async ({ data }) => {
-        // Prevent multiple scans by checking if already scanned
         if (scanned) return;
         scanLocked.current = true;
         setScanned(true);
@@ -31,39 +30,34 @@ export default function MainScreen({ navigation }) {
         const parts = data.split('^?');
         if (parts.length !== 7 && parts.length !== 9) {
             Alert.alert("QR формат алдаатай", "QR кодын өгөгдөл дутуу эсвэл илүү байна.");
-            setScanned(false); // Allow rescanning on error
+            setScanned(false);
             return;
         }
 
         const parsed = {
+            lordID: parts[0] || '',
+            account: parts[1] || '',
             assetCode: parts[2] || '',
             unitPrice: parts[3] || '',
-            account: parts[1] || '',
             date: parts[4] || '',
+            serialNumber: parts[6] || '',
             raw: data,
             handler: '',
             assetName: '',
-            unitType: ''
+            unitType: '',
         };
 
         if (parts.length === 9) {
             parsed.handler = parts[7] || '';
             parsed.assetName = parts[8] || '';
-            parsed.unitType = ''; // ✅ Unit not present in 9-field QR
-            console.log("9-field QR parsed data:", parsed);
+            parsed.unitType = '';
             setInfoText(parsed);
-        }
-        else {
-            // 7 field QR - fetch data from API
-            console.log("7-field QR detected, fetching from API...");
-
+        } else {
             try {
                 const year = selectedDate.getFullYear();
                 const month = selectedDate.getMonth() + 1;
                 const deviceId = Device.osInternalBuildId || Device.modelId || Device.deviceName || "UNKNOWN";
                 const fullRaw = `${data}^?${year}^?${month}^?${deviceId}^?CT$FS4`;
-
-                console.log("Sending to API:", fullRaw);
 
                 const response = await fetch("https://ctsystem.mn/api/details", {
                     method: "POST",
@@ -71,80 +65,38 @@ export default function MainScreen({ navigation }) {
                     body: JSON.stringify(fullRaw),
                 });
 
-                console.log("API response status:", response.status);
+                if (!response.ok) throw new Error(`HTTP error! status: ${response.status}`);
 
-                if (!response.ok) {
-                    throw new Error(`HTTP error! status: ${response.status}`);
+                const responseText = await response.text();
+                let jsonData = JSON.parse(responseText);
+                if (typeof jsonData === 'string') jsonData = JSON.parse(jsonData);
+
+                const dataArray = Array.isArray(jsonData) ? jsonData : [jsonData];
+
+                if (dataArray.length > 0) {
+                    const item = dataArray[0];
+                    parsed.assetName = item.name || '';
+                    parsed.unitType = item.unt || '';
+                    parsed.handler = item.lord || '';
+                    parsed.date = item.ognoo ? item.ognoo.toString('yyyy-MM-dd') : parsed.date;
+                    parsed.account = item.dans || '';
+                    parsed.unitPrice = item.une ? item.une.toString() : parsed.unitPrice;
                 }
 
-                // Alternative approach - handle different response formats
-                let dataArray = [];
-
-                try {
-                    const responseText = await response.text();
-                   // console.log("Raw response:", responseText);
-                 //   console.log("Raw response type:", typeof responseText);
-                  //  console.log("Raw response length:", responseText.length);
-
-                    // Try to parse as JSON first
-                    let jsonData = JSON.parse(responseText);
-                   // console.log("After JSON.parse - type:", typeof jsonData);
-                //    console.log("After JSON.parse - is array:", Array.isArray(jsonData));
-
-                    // If it's a string, try to parse it again (double-stringified JSON)
-                    if (typeof jsonData === 'string') {
-                        console.log("Response is stringified JSON, parsing again...");
-                        jsonData = JSON.parse(jsonData);
-                    }
-
-                    // Ensure we have an array
-                    if (Array.isArray(jsonData)) {
-                        dataArray = jsonData;
-                    } else if (jsonData && typeof jsonData === 'object') {
-                        // If it's a single object, wrap it in an array
-                        dataArray = [jsonData];
-                    }
-
-      //             console.log("Final dataArray:", dataArray);
-                 //   console.log("dataArray length:", dataArray.length);
-
-                    if (dataArray.length > 0) {
-                        const item = dataArray[0];
-                        console.log("First item:", item);
-
-                        // Update parsed object with API data
-                        parsed.assetName = item.name || '';
-                        parsed.unitType = item.unt || '';
-                        parsed.handler = item.lord || '';
-                        parsed.date = item.ognoo ? item.ognoo.toString('yyyy-MM-dd') : parsed.date;
-                        parsed.account = item.dans || '';
-                        parsed.unitPrice = item.une ? item.une.toString() : parsed.unitPrice;
-
-                      //  console.log("Final parsed data with API info:", parsed);
-                        setInfoText(parsed);
-                    } else {
-                        console.log("No valid data found in response");
-                        Alert.alert("API алдаа", "Мэдээлэл олдсонгүй.");
-                        setInfoText(parsed);
-                    }
-
-                } catch (parseError) {
-                    console.error("JSON parsing error:", parseError);
-                    Alert.alert("Алдаа", `Өгөгдөл боловсруулах үед алдаа: ${parseError.message}`);
-                    setInfoText(parsed);
-                }
-
-            } catch (error) {
-                console.error("Failed to fetch full info:", error);
-                Alert.alert("Алдаа", `API-тай холбогдох үед алдаа гарлаа: ${error.message}`);
                 setInfoText(parsed);
+            } catch (error) {
+                console.warn("🛑 API error, possibly offline. Saving fallback info.");
+                parsed.assetName = '[интернет шаардлагатай]';
+                parsed.unitType = '';
+                parsed.handler = '';
+                parsed.account = parsed.account || '—';
+                parsed.unitPrice = parsed.unitPrice || '—';
+                parsed.date = parsed.date || new Date().toISOString().split("T")[0];
+                setInfoText(parsed);
+                Alert.alert("Интернет холболт алга", "Мэдээлэл бүрэн биш боловч хадгалах боломжтой.");
             }
         }
     };
-
-
-
-
 
 
     const saveData = async () => {
@@ -159,14 +111,23 @@ export default function MainScreen({ navigation }) {
             const deviceId = Device.osInternalBuildId || Device.modelId || Device.deviceName || "UNKNOWN";
             const year = selectedDate.getFullYear();
             const month = selectedDate.getMonth() + 1;
-            const fullPayload = `${infoText.raw}^?${year}^?${month}^?${deviceId}^?CT$FS4`;
 
-            // 🧠 Format with quotes like the API expects
+            const fullPayload = `${infoText.raw}^?${year}^?${month}^?${deviceId}^?CT$FS4`;
             const formattedPayload = `"${fullPayload}"`;
 
-            // ✅ Save to AsyncStorage
             const existing = await AsyncStorage.getItem('history');
-            const parsed = existing ? JSON.parse(existing) : [];
+            const parsedHistory = existing ? JSON.parse(existing) : [];
+
+            const isDuplicate = parsedHistory.some(item =>
+                item.assetCode === infoText.assetCode &&
+                item.serialNumber === infoText.serialNumber
+            );
+
+            if (isDuplicate) {
+                Alert.alert('Давхцал', 'Ижил хөрөнгийн кодтой хөрөнгө аль хэдийн хадгалагдсан байна.');
+                setInfoText(infoText);
+                return;
+            }
 
             const newItem = {
                 ...infoText,
@@ -174,22 +135,25 @@ export default function MainScreen({ navigation }) {
                 year,
                 month,
                 tag: "CT$FS4",
-                createdAt: new Date().toISOString() // Since no Firestore timestamp
+                createdAt: new Date().toISOString()
             };
 
-            parsed.unshift(newItem); // Add new to front
-            await AsyncStorage.setItem('history', JSON.stringify(parsed));
+            parsedHistory.unshift(newItem);
+            await AsyncStorage.setItem('history', JSON.stringify(parsedHistory));
 
-            // ✅ Send to API
-            await fetch("https://ctsystem.mn/api/asset", {
-                method: "POST",
-                headers: { "Content-Type": "application/json" },
-                body: formattedPayload
-            });
+            // 📨 Зөвхөн интернеттэй, assetName нь бүрэн байгаа тохиолдолд API руу илгээх
+            if (infoText.assetName !== '[интернет шаардлагатай]') {
+                await fetch("https://ctsystem.mn/api/asset", {
+                    method: "POST",
+                    headers: { "Content-Type": "application/json" },
+                    body: formattedPayload
+                });
+            }
 
             Alert.alert('Амжилттай', 'Мэдээллийг хадгаллаа.');
             setInfoText(null);
             setScanned(false);
+
         } catch (e) {
             console.error("Error saving data: ", e);
             Alert.alert('Алдаа', 'Мэдээллийг хадгалах үед алдаа гарлаа.');
@@ -197,6 +161,8 @@ export default function MainScreen({ navigation }) {
             setLoading(false);
         }
     };
+
+
 
 
     const handleMonthSelect = (monthIndex) => {
