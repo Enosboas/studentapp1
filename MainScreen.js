@@ -1,131 +1,301 @@
-import React, { useState, useRef } from 'react';
+import React, { useState, useRef, useEffect } from 'react';
 import {
     StyleSheet, Text, View, TouchableOpacity,
-    SafeAreaView, ScrollView, StatusBar, Alert, Modal,
-    ActivityIndicator, Vibration, Button
+    ScrollView, Alert, ActivityIndicator, Vibration, Button
 } from 'react-native';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { CameraView, useCameraPermissions } from 'expo-camera';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import * as Device from 'expo-device';
 import { useIsFocused } from '@react-navigation/native';
+import { useNetInfo } from '@react-native-community/netinfo';
 
-export default function MainScreen({ navigation }) {
+const ALERT_COOLDOWN_MS = 1200;
+const RESCAN_DELAY_MS = 1000; // бага зэрэг өсгөвөл давхар уншилт багасна
+
+export default function MainScreen({ selectedDate }) {
     const [infoText, setInfoText] = useState(null);
     const [loading, setLoading] = useState(false);
     const [permission, requestPermission] = useCameraPermissions();
     const [scanned, setScanned] = useState(false);
-    const [selectedDate, setSelectedDate] = useState(new Date());
-    const [isModalVisible, setIsModalVisible] = useState(false);
-    const [displayYear, setDisplayYear] = useState(new Date().getFullYear());
     const scanLocked = useRef(false);
+    const alertStampRef = useRef(0);
     const isFocused = useIsFocused();
+    const { isConnected } = useNetInfo();
 
+    const [precheck, setPrecheck] = useState({ level: 'idle', messages: [] }); // 'idle' | 'ok' | 'warn' | 'error'
+
+    // ---- Давхар тайм-аут цэвэрлэх төвлөрсөн unlock ----
+    const rescanTimerRef = useRef(null);
+    const unlockScanner = (delay = RESCAN_DELAY_MS) => {
+        if (rescanTimerRef.current) {
+            clearTimeout(rescanTimerRef.current);
+            rescanTimerRef.current = null;
+        }
+        rescanTimerRef.current = setTimeout(() => {
+            setScanned(false);
+            scanLocked.current = false;
+            rescanTimerRef.current = null;
+        }, delay);
+    };
+    useEffect(() => {
+        return () => {
+            if (rescanTimerRef.current) {
+                clearTimeout(rescanTimerRef.current);
+                rescanTimerRef.current = null;
+            }
+        };
+    }, []);
+
+    // -------- Туслах функцууд --------
+    const showOnceAlert = (title, message, onOk) => {
+        const now = Date.now();
+        if (now - alertStampRef.current < ALERT_COOLDOWN_MS) return; // throttle
+        alertStampRef.current = now;
+        Alert.alert(title, message, [{ text: 'OK', onPress: onOk || (() => {}) }]);
+    };
+
+    const normalizeDate = (s) => {
+        if (!s) return "";
+        let t = String(s).trim();
+        // yyyy.mm.dd / yyyy/mm/dd → yyyy-mm-dd
+        t = t.replace(/[./]/g, "-");
+        // yyyy-m-d / yyyy-mm-dd → сар/өдрийг 2 оронтой
+        const m = t.match(/^(\d{4})-(\d{1,2})-(\d{1,2})$/);
+        if (m) {
+            const [, y, mo, d] = m;
+            const pad = (n) => String(n).padStart(2, "0");
+            return `${y}-${pad(mo)}-${pad(d)}`;
+        }
+        // yyyyMMdd → yyyy-mm-dd
+        const m2 = t.match(/^(\d{4})(\d{2})(\d{2})$/);
+        if (m2) return `${m2[1]}-${m2[2]}-${m2[3]}`;
+        return t;
+    };
+
+    const loadNormalizedHistory = async () => {
+        const existing = await AsyncStorage.getItem('history') || '[]';
+        const arr = JSON.parse(existing);
+        return arr.map(it => {
+            if (!it.orgCode) {
+                const rawParts = (it.raw || '').split('^?');
+                return { ...it, orgCode: rawParts[5] || '' }; // 6 дахь талбар
+            }
+            return it;
+        });
+    };
+
+    const ymKey = (y, m) => `${y}-${String(m).padStart(2, "0")}`;
+
+    const runPrecheck = (parsed, selectedDate, history, isConnected) => {
+        let level = 'ok';
+        const messages = [];
+
+        // 1) OrgCode зөрчил
+        const existingOrgs = new Set(history.map(it => it.orgCode).filter(Boolean));
+        if (existingOrgs.size > 0) {
+            const firstOrg = Array.from(existingOrgs)[0];
+            if (parsed.orgCode && parsed.orgCode !== firstOrg) {
+                level = 'error';
+                messages.push('Өөр байгууллагын хөрөнгө байна. Хуучин түүхтэй зөрчилдөж байна. Хуучин түүхээ устгаад шинэ тооллого эхлүүлнэ үү.');
+            }
+        }
+
+        // 2) Давхцал (assetCode + serialNumber)
+        const isDup = history.some(
+            it => it.assetCode === parsed.assetCode && it.serialNumber === parsed.serialNumber
+        );
+        if (isDup) {
+            level = 'error';
+            messages.push('Энэ хөрөнгө аль хэдийн хадгалагдсан байна (давхцал).');
+        }
+
+        // 3) Хадгалсан түүхийн он/сар ↔ сонгосон он/сар
+        const selectedYM = ymKey(selectedDate.getFullYear(), selectedDate.getMonth() + 1);
+        const historyYMSet = new Set(
+            history.filter(it => it.year && it.month).map(it => ymKey(it.year, it.month))
+        );
+        const hasDifferentMonth = [...historyYMSet].some(ym => ym !== selectedYM);
+        if (hasDifferentMonth) {
+            level = 'error';
+            messages.push(
+                `Хадгалсан түүх ${[...historyYMSet].join(', ')} сард байна. ` +
+                `Харин сонгосон сар ${selectedYM}. Зөрчилтэй тул тохирох сар руу шилжих эсвэл түүхээ цэвэрлэнэ үү.`
+            );
+        }
+
+        // 4) Дэлгэрэнгүй татагдаагүй (оффлайн/сервер алдаа) → анхаар
+        if (parsed.assetName === '[интернет шаардлагатай]' || parsed.assetName === '[оффлайн хадгалсан]') {
+            if (level !== 'error') level = 'warn';
+            messages.push('Дэлгэрэнгүй мэдээлэл татагдаагүй (оффлайн эсвэл сервер алдаа).');
+        }
+
+        // 5) Оффлайн → анхаар
+        if (!isConnected) {
+            if (level !== 'error') level = 'warn';
+            messages.push('Оффлайн горим: зөвхөн төхөөрөмж дээр хадгална. Дараа нь синк хийж болно.');
+        }
+
+        if (messages.length === 0) messages.push('Бэлэн байна. Хадгалж болно ✅');
+        return { level, messages };
+    };
+
+    // -------- QR уншилт --------
     const handleBarCodeScanned = async ({ data }) => {
-        if (scanned) return;
+        if (!isFocused) return;
+        if (scanned || scanLocked.current) return;
+
+        // lock & vibrate
         scanLocked.current = true;
         setScanned(true);
         Vibration.vibrate();
 
-        const parts = data.split('^?');
-        if (parts.length !== 7 && parts.length !== 9) {
-            Alert.alert("QR формат алдаатай", "QR кодын өгөгдөл дутуу эсвэл илүү байна.");
-            setScanned(false);
-            return;
-        }
+        try {
+            const parts = (data || '').split('^?');
+            if (parts.length !== 7 && parts.length !== 9) {
+                showOnceAlert('QR формат алдаатай', 'QR кодын өгөгдөл дутуу эсвэл илүү байна.', () => unlockScanner());
+                return;
+            }
 
-        const parsed = {
-            lordID: parts[0] || '',
-            account: parts[1] || '',
-            assetCode: parts[2] || '',
-            unitPrice: parts[3] || '',
-            date: parts[4] || '',
-            serialNumber: parts[6] || '',
-            raw: data,
-            handler: '',
-            assetName: '',
-            unitType: '',
-        };
+            // 6 дахь талбар = байгууллагын код
+            const orgCode = parts[5] || '';
 
-        if (parts.length === 9) {
-            parsed.handler = parts[7] || '';
-            parsed.assetName = parts[8] || '';
-            parsed.unitType = '';
-            setInfoText(parsed);
-        } else {
-            try {
+            const parsed = {
+                lordID: parts[0] || '',
+                account: parts[1] || '',
+                assetCode: parts[2] || '',
+                unitPrice: parts[3] || '',
+                date: normalizeDate(parts[4] || ''),
+                serialNumber: parts[6] || '',
+                orgCode,
+                raw: data,
+                handler: '',
+                assetName: '',
+                unitType: '',
+            };
+
+            // 9 талбар → нэр/эс хариуцагч шууд
+            if (parts.length === 9) {
+                parsed.handler = parts[7] || '';
+                parsed.assetName = parts[8] || '';
+            } else {
+                // 7 талбар → зөвхөн онлайнаар details авах
                 const year = selectedDate.getFullYear();
                 const month = selectedDate.getMonth() + 1;
-                const deviceId = Device.osInternalBuildId || Device.modelId || Device.deviceName || "UNKNOWN";
+                const deviceId = Device.osInternalBuildId || 'UNKNOWN';
                 const fullRaw = `${data}^?${year}^?${month}^?${deviceId}^?CT$FS4`;
 
-                const response = await fetch("https://ctsystem.mn/api/details", {
-                    method: "POST",
-                    headers: { "Content-Type": "application/json" },
-                    body: JSON.stringify(fullRaw),
-                });
+                let item = null;
+                if (isConnected) {
+                    try {
+                        const response = await fetch('https://ctsystem.mn/api/details', {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify(fullRaw), // энэ endpoint чинь string JSON авдаг
+                        });
+                        if (!response.ok) throw new Error(`HTTP ${response.status}`);
+                        const responseText = await response.text();
+                        let jsonData;
+                        try {
+                            jsonData = JSON.parse(responseText);
+                            if (typeof jsonData === 'string') jsonData = JSON.parse(jsonData);
+                        } catch {
+                            jsonData = null;
+                        }
+                        item = Array.isArray(jsonData) ? jsonData[0] : jsonData || null;
+                    } catch (err) {
+                        showOnceAlert('Сервер алдаа', 'Дэлгэрэнгүй татаж чадсангүй. Хадгалж болно (оффлайн маягаар).');
+                    }
+                } else {
+                    showOnceAlert('Оффлайн горим', 'Интернетгүй тул дэлгэрэнгүй авахгүй. Хадгалж болно.');
+                }
 
-                if (!response.ok) throw new Error(`HTTP error! status: ${response.status}`);
-
-                const responseText = await response.text();
-                let jsonData = JSON.parse(responseText);
-                if (typeof jsonData === 'string') jsonData = JSON.parse(jsonData);
-
-                const dataArray = Array.isArray(jsonData) ? jsonData : [jsonData];
-
-                if (dataArray.length > 0) {
-                    const item = dataArray[0];
+                if (item) {
                     parsed.assetName = item.name || '';
                     parsed.unitType = item.unt || '';
                     parsed.handler = item.lord || '';
-                    parsed.date = item.ognoo ? item.ognoo.toString('yyyy-MM-dd') : parsed.date;
+                    parsed.date = normalizeDate(item.ognoo || parsed.date);
                     parsed.account = item.dans || '';
-                    parsed.unitPrice = item.une ? item.une.toString() : parsed.unitPrice;
+                    parsed.unitPrice = item.une != null ? String(item.une) : parsed.unitPrice;
+                } else if (!parsed.assetName) {
+                    parsed.assetName = '[оффлайн хадгалсан]';
                 }
-
-                setInfoText(parsed);
-            } catch (error) {
-                console.warn("🛑 API error, possibly offline. Saving fallback info.");
-                parsed.assetName = '[интернет шаардлагатай]';
-                parsed.unitType = '';
-                parsed.handler = '';
-                parsed.account = parsed.account || '—';
-                parsed.unitPrice = parsed.unitPrice || '—';
-                parsed.date = parsed.date || new Date().toISOString().split("T")[0];
-                setInfoText(parsed);
-                Alert.alert("Интернет холболт алга", "Мэдээлэл бүрэн биш боловч хадгалах боломжтой.");
             }
+
+            // ---------- Урьдчилсан шалгалт ----------
+            const hist = await loadNormalizedHistory();
+            const result = runPrecheck(parsed, selectedDate, hist, isConnected);
+            setPrecheck(result);
+
+            if (result.level === 'error') {
+                // Алдаа бол "Мэдээлэл" хэсэгт data-г үзүүлэхгүй
+                setInfoText(null);
+                showOnceAlert('Алдаа', result.messages.join('\n'), () => unlockScanner());
+                return;
+            }
+
+            // OK/WARN үед мэдээллээ харуулна
+            setInfoText(parsed);
+
+            if (result.level === 'warn') {
+                showOnceAlert('Анхааруулга', result.messages.join('\n'));
+            }
+
+            // Амжилттай үед lock-оо тайлахгүй (Rescan товчоор нээнэ)
+            scanLocked.current = false;
+
+        } catch (e) {
+            showOnceAlert('Алдаа', 'Унших үед алдаа гарлаа. Дахин оролдоно уу.', () => unlockScanner());
         }
     };
 
-
+    // -------- Хадгалах --------
     const saveData = async () => {
         if (!infoText || !infoText.raw) {
-            Alert.alert('Хоосон мэдээлэл', 'Хадгалах мэдээлэл олдсонгүй.');
+            showOnceAlert('Хоосон мэдээлэл', 'Хадгалах мэдээлэл олдсонгүй.');
+            return;
+        }
+        if (precheck.level === 'error') {
+            showOnceAlert('Хадгалах боломжгүй', precheck.messages.join('\n'));
             return;
         }
 
         setLoading(true);
-
         try {
-            const deviceId = Device.osInternalBuildId || Device.modelId || Device.deviceName || "UNKNOWN";
+            const deviceId = Device.osInternalBuildId || 'UNKNOWN';
             const year = selectedDate.getFullYear();
             const month = selectedDate.getMonth() + 1;
 
-            const fullPayload = `${infoText.raw}^?${year}^?${month}^?${deviceId}^?CT$FS4`;
-            const formattedPayload = `"${fullPayload}"`;
+            const existing = await AsyncStorage.getItem('history') || '[]';
+            const parsedHistory = JSON.parse(existing);
+            const normalizedHistory = parsedHistory.map(it => {
+                if (!it.orgCode) {
+                    const rawParts = (it.raw || '').split('^?');
+                    return { ...it, orgCode: rawParts[5] || '' };
+                }
+                return it;
+            });
 
-            const existing = await AsyncStorage.getItem('history');
-            const parsedHistory = existing ? JSON.parse(existing) : [];
+            // байгууллагын кодын хамгаалалт
+            const existingOrgCodes = new Set(normalizedHistory.map(it => it.orgCode).filter(Boolean));
+            if (existingOrgCodes.size > 0) {
+                const firstOrg = Array.from(existingOrgCodes)[0];
+                if (infoText.orgCode && infoText.orgCode !== firstOrg) {
+                    showOnceAlert(
+                        'Өөр байгууллагын хөрөнгө',
+                        'Хуучин түүхтэй зөрчилдөж байна. Хуучин түүхээ устгаад шинэ тооллого эхлүүлнэ үү.'
+                    );
+                    setLoading(false);
+                    return;
+                }
+            }
 
-            const isDuplicate = parsedHistory.some(item =>
-                item.assetCode === infoText.assetCode &&
-                item.serialNumber === infoText.serialNumber
-            );
-
-            if (isDuplicate) {
-                Alert.alert('Давхцал', 'Ижил хөрөнгийн кодтой хөрөнгө аль хэдийн хадгалагдсан байна.');
-                setInfoText(infoText);
+            // давхцал
+            if (normalizedHistory.some(it =>
+                it.assetCode === infoText.assetCode && it.serialNumber === infoText.serialNumber
+            )) {
+                showOnceAlert('Давхцал', 'Энэ хөрөнгө аль хэдийн хадгалагдсан байна.');
+                setLoading(false);
                 return;
             }
 
@@ -134,278 +304,145 @@ export default function MainScreen({ navigation }) {
                 deviceId,
                 year,
                 month,
-                tag: "CT$FS4",
-                createdAt: new Date().toISOString()
+                tag: 'CT$FS4',
+                createdAt: new Date().toISOString(),
             };
 
-            parsedHistory.unshift(newItem);
-            await AsyncStorage.setItem('history', JSON.stringify(parsedHistory));
+            await AsyncStorage.setItem('history', JSON.stringify([newItem, ...normalizedHistory]));
 
-            // 📨 Зөвхөн интернеттэй, assetName нь бүрэн байгаа тохиолдолд API руу илгээх
-            if (infoText.assetName !== '[интернет шаардлагатай]') {
-                await fetch("https://ctsystem.mn/api/asset", {
-                    method: "POST",
-                    headers: { "Content-Type": "application/json" },
-                    body: formattedPayload
-                });
+            // Онлайнаар байвал серверт явуулна (asset endpoint string JSON авдаг хэвээр)
+            if (isConnected && infoText.assetName !== '[интернет шаардлагатай]' && infoText.assetName !== '[оффлайн хадгалсан]') {
+                const fullPayload = `${infoText.raw}^?${year}^?${month}^?${deviceId}^?CT$FS4`;
+                await fetch('https://ctsystem.mn/api/asset', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: `"${fullPayload}"`,
+                }).catch(() => {});
             }
 
             Alert.alert('Амжилттай', 'Мэдээллийг хадгаллаа.');
             setInfoText(null);
             setScanned(false);
-
+            setPrecheck({ level: 'idle', messages: [] });
         } catch (e) {
-            console.error("Error saving data: ", e);
-            Alert.alert('Алдаа', 'Мэдээллийг хадгалах үед алдаа гарлаа.');
+            showOnceAlert('Алдаа', 'Мэдээллийг хадгалах үед алдаа гарлаа.');
         } finally {
             setLoading(false);
         }
-    };
-
-
-
-
-    const handleMonthSelect = (monthIndex) => {
-        const newDate = new Date(displayYear, monthIndex);
-        setSelectedDate(newDate);
-        setIsModalVisible(false);
-    };
-
-    const MonthPickerModal = () => {
-        const months = ["January", "February", "March", "April", "May", "June",
-            "July", "August", "September", "October", "November", "December"];
-        const currentYear = new Date().getFullYear();
-        const currentMonth = new Date().getMonth();
-
-        return (
-            <Modal animationType="slide" transparent={true} visible={isModalVisible} onRequestClose={() => setIsModalVisible(false)}>
-                <View style={styles.modalContainer}>
-                    <View style={styles.modalContent}>
-                        <View style={styles.yearHeader}>
-                            <TouchableOpacity onPress={() => setDisplayYear(displayYear - 1)}>
-                                <MaterialCommunityIcons name="chevron-left" size={32} color="#3b82f6" />
-                            </TouchableOpacity>
-                            <Text style={styles.modalTitle}>{displayYear}</Text>
-                            <TouchableOpacity disabled={displayYear >= currentYear} onPress={() => setDisplayYear(displayYear + 1)}>
-                                <MaterialCommunityIcons name="chevron-right" size={32} color={displayYear >= currentYear ? '#ccc' : '#3b82f6'} />
-                            </TouchableOpacity>
-                        </View>
-                        {months.map((month, index) => {
-                            const isFutureMonth = displayYear === currentYear && index > currentMonth;
-                            return (
-                                <TouchableOpacity key={month} style={styles.monthItem} disabled={isFutureMonth} onPress={() => handleMonthSelect(index)}>
-                                    <Text style={[styles.monthText, isFutureMonth && styles.disabledMonthText]}>{month}</Text>
-                                </TouchableOpacity>
-                            );
-                        })}
-                        <TouchableOpacity style={styles.closeButton} onPress={() => {
-                            setIsModalVisible(false);
-                            setDisplayYear(selectedDate.getFullYear());
-                        }}>
-                            <Text style={styles.closeButtonText}>Close</Text>
-                        </TouchableOpacity>
-                    </View>
-                </View>
-            </Modal>
-        );
     };
 
     if (!permission) return <View />;
     if (!permission.granted) {
         return (
             <View style={styles.centerText}>
-                <Text style={{ textAlign: 'center', marginBottom: 10 }}>Camera permission is required.</Text>
-                <Button onPress={requestPermission} title="Grant Permission" />
+                <Text style={{ textAlign: 'center', marginBottom: 10 }}>Камер ашиглах зөвшөөрөл олгоно уу.</Text>
+                <Button onPress={requestPermission} title="Зөвшөөрөл олгох" />
             </View>
         );
     }
 
     return (
-        <SafeAreaView style={styles.safeArea}>
-            <StatusBar barStyle="dark-content" />
-            <MonthPickerModal />
-            <ScrollView contentContainerStyle={styles.container}>
-                <View style={styles.cameraContainer}>
-                    {isFocused && (
-                        <CameraView
-                            onBarcodeScanned={scanned ? undefined : handleBarCodeScanned}
-                            barcodeScannerSettings={{ barcodeTypes: ['qr'] }}
-                            style={StyleSheet.absoluteFillObject}
-                        />
-                    )}
-
-                    {scanned && (
-                        <TouchableOpacity
-                            style={styles.rescanButton}
-                            onPress={() => {
-                                setInfoText(null);
-                                setTimeout(() => {
-                                    scanLocked.current = false;  // 🔓 Unlock scanning
-                                    setScanned(false);           // Re-enable UI
-                                }, 300);// Clear the info when rescanning
-                            }}
-                        >
-                            <MaterialCommunityIcons name="qrcode-scan" size={40} color="#fff" />
-                            <Text style={styles.rescanButtonText}>Дахин унших</Text>
-                        </TouchableOpacity>
-                    )}
-                </View>
-
-                <View style={styles.buttonRow}>
-                    <TouchableOpacity style={styles.dateButton} onPress={() => {
-                        setDisplayYear(selectedDate.getFullYear());
-                        setIsModalVisible(true);
-                    }}>
-                        <Text style={styles.buttonText}>
-                            {selectedDate.toLocaleString('mn-MN', { month: 'long', year: 'numeric' })}
-                        </Text>
+        <ScrollView contentContainerStyle={styles.container}>
+            <View style={styles.cameraContainer}>
+                {isFocused && (
+                    <CameraView
+                        onBarcodeScanned={scanned ? undefined : handleBarCodeScanned}
+                        barcodeScannerSettings={{ barcodeTypes: ['qr'] }}
+                        style={StyleSheet.absoluteFillObject}
+                    />
+                )}
+                {scanned && (
+                    <TouchableOpacity
+                        style={styles.rescanButton}
+                        onPress={() => {
+                            setInfoText(null);
+                            setPrecheck({ level: 'idle', messages: [] });
+                            unlockScanner(0); // шууд дахин уншуулна
+                        }}
+                    >
+                        <MaterialCommunityIcons name="qrcode-scan" size={40} color="#fff" />
+                        <Text style={styles.rescanButtonText}>Дахин унших</Text>
                     </TouchableOpacity>
-                    <TouchableOpacity style={styles.saveButton} onPress={saveData} disabled={loading}>
-                        {loading ? <ActivityIndicator color="#fff" /> : <Text style={styles.buttonText}>Хадгалах</Text>}
-                    </TouchableOpacity>
-                </View>
+                )}
+            </View>
 
-                <View style={styles.infoBox}>
-                    <Text style={styles.infoTitle}>Мэдээлэл</Text>
-                    {infoText ? (
-                        <Text style={styles.infoFormatted}>
-                            Эд хариуцагч: {infoText.handler || " "}{"\n"}
-                            Хөрөнгийн код: {infoText.assetCode || " "}{"\n"}
-                            Хөрөнгийн нэр: {infoText.assetName || " "}{"\n"}
-                            {infoText.unitType ? `Хэмжих нэгж: ${infoText.unitType}\n` : ""}
-                            Нэгж үнэ: {Number(infoText.unitPrice || 0).toLocaleString('mn-MN')} ₮ {"\n"}
-                            Бүртгэлийн данс: {infoText.account || " "}{"\n"}
-                            А.О.Огноо: {infoText.date || " "}
-                        </Text>
-                    ) : (
-                        <Text style={styles.placeholderText}>QR уншуулсан мэдээлэл энд харагдана.</Text>
-                    )}
+            {!isConnected && (
+                <View style={styles.offlineBanner}>
+                    <Text style={styles.offlineText}>Оффлайн горим: өгөгдөл төхөөрөмж дээр хадгалагдана.</Text>
                 </View>
+            )}
 
-            </ScrollView>
-        </SafeAreaView>
+            <TouchableOpacity style={styles.saveButton} onPress={saveData} disabled={loading}>
+                {loading ? <ActivityIndicator color="#fff" /> : <Text style={styles.buttonText}>Хадгалах</Text>}
+            </TouchableOpacity>
+
+            <View style={styles.infoBox}>
+                <Text style={styles.infoTitle}>Мэдээлэл</Text>
+                {infoText ? (
+                    <Text style={styles.infoFormatted}>
+                        Эд хариуцагч: {infoText.handler || ' '}{"\n"}
+                        Хөрөнгийн код: {infoText.assetCode || ' '}{"\n"}
+                        Хөрөнгийн нэр: {infoText.assetName || ' '}{"\n"}
+                        {infoText.unitType ? `Хэмжих нэгж: ${infoText.unitType}\n` : ''}
+                        Нэгж үнэ: {Number(infoText.unitPrice || 0).toLocaleString('mn-MN')} ₮{"\n"}
+                        Бүртгэлийн данс: {infoText.account || ' '}{"\n"}
+                        А.О.Огноо: {infoText.date || ' '}{"\n"}
+                        Байгууллагын код: {infoText.orgCode || ' '}
+                    </Text>
+                ) : (
+                    <Text style={styles.placeholderText}>QR уншуулсан мэдээлэл энд харагдана.</Text>
+                )}
+
+                {precheck.level !== 'idle' && (
+                    <View style={[
+                        styles.checkPanel,
+                        precheck.level === 'ok' && styles.okPanel,
+                        precheck.level === 'warn' && styles.warnPanel,
+                        precheck.level === 'error' && styles.errorPanel
+                    ]}>
+                        {precheck.messages.map((m, i) => (
+                            <Text
+                                key={i}
+                                style={[
+                                    styles.checkText,
+                                    precheck.level === 'ok' && styles.okText,
+                                    precheck.level === 'warn' && styles.warnText,
+                                    precheck.level === 'error' && styles.errorText
+                                ]}
+                            >
+                                • {m}
+                            </Text>
+                        ))}
+                    </View>
+                )}
+            </View>
+        </ScrollView>
     );
 }
 
 const styles = StyleSheet.create({
-    safeArea: { flex: 1, backgroundColor: '#f0f2f5' },
-    container: { flexGrow: 1, alignItems: 'center', padding: 20 },
-    cameraContainer: {
-        width: 250,
-        height: 250,
-        overflow: 'hidden',
-        borderRadius: 10,
-        borderWidth: 3,
-        borderColor: '#5dade2',
-        marginBottom: 30,
-        backgroundColor: '#000',
-        justifyContent: 'center',
-        alignItems: 'center'
-    },
-    buttonRow: {
-        flexDirection: 'row',
-        justifyContent: 'space-between',
-        width: '100%',
-        marginBottom: 20,
-    },
-    dateButton: {
-        flex: 1,
-        marginRight: 10,
-        backgroundColor: '#5dade2',
-        paddingVertical: 15,
-        borderRadius: 10,
-        alignItems: 'center',
-        justifyContent: 'center'
-    },
-    buttonText: {
-        color: '#ffffff',
-        fontSize: 16,
-        fontWeight: 'bold',
-        textAlign: 'center'
-    },
-    rescanButton: {
-        backgroundColor: 'rgba(0,0,0,0.6)',
-        justifyContent: 'center',
-        alignItems: 'center',
-        width: '100%',
-        height: '100%',
-    },
-    rescanButtonText: {
-        color: '#fff',
-        fontSize: 18,
-        fontWeight: 'bold',
-        marginTop: 10,
-    },
-    centerText: {
-        flex: 1,
-        justifyContent: 'center',
-        alignItems: 'center',
-        paddingHorizontal: 20,
-    },
-    saveButton: {
-        flex: 1,
-        marginLeft: 10,
-        backgroundColor: '#34d399',
-        paddingVertical: 15,
-        borderRadius: 10,
-        alignItems: 'center',
-        justifyContent: 'center'
-    },
-    infoBox: {
-        width: '100%',
-        height:'43%',
-        borderColor: '#5dade2',
-        borderWidth: 2,
-        borderRadius: 10,
-        padding: 15,
-        backgroundColor: '#ffffff',
-        marginBottom: 20
-    },
-    infoTitle: {
-        fontSize: 20,
-        fontWeight: 'bold',
-        textAlign: 'center',
-        marginBottom: 10,
-        color: '#333'
-    },
+    container: { flexGrow: 1, alignItems: 'center', padding: 20, backgroundColor: '#f0f2f5' },
+    cameraContainer: { width: 250, height: 250, overflow: 'hidden', borderRadius: 10, borderWidth: 3, borderColor: '#5dade2', marginBottom: 30, backgroundColor: '#000', justifyContent: 'center', alignItems: 'center' },
+    saveButton: { backgroundColor: '#34d399', paddingVertical: 15, borderRadius: 10, alignItems: 'center', justifyContent: 'center', width: '100%', marginBottom: 20 },
+    buttonText: { color: '#ffffff', fontSize: 16, fontWeight: 'bold' },
+    rescanButton: { backgroundColor: 'rgba(0,0,0,0.6)', justifyContent: 'center', alignItems: 'center', width: '100%', height: '100%' },
+    rescanButtonText: { color: '#fff', fontSize: 18, fontWeight: 'bold', marginTop: 10 },
+    centerText: { flex: 1, justifyContent: 'center', alignItems: 'center', paddingHorizontal: 20 },
+    infoBox: { width: '100%', borderColor: '#5dade2', borderWidth: 2, borderRadius: 10, padding: 15, backgroundColor: '#ffffff', marginBottom: 20, flex: 1 },
+    infoTitle: { fontSize: 20, fontWeight: 'bold', textAlign: 'center', marginBottom: 10, color: '#333' },
     infoFormatted: { fontSize: 16, color: '#333', lineHeight: 26 },
     placeholderText: { color: '#999', fontStyle: 'italic' },
-    modalContainer: {
-        flex: 1,
-        justifyContent: 'center',
-        alignItems: 'center',
-        backgroundColor: 'rgba(0,0,0,0.5)',
-    },
-    modalContent: {
-        width: '85%',
-        backgroundColor: 'white',
-        borderRadius: 10,
-        padding: 20,
-        alignItems: 'center',
-    },
-    yearHeader: {
-        width: '100%',
-        flexDirection: 'row',
-        justifyContent: 'space-between',
-        alignItems: 'center',
-        marginBottom: 15,
-    },
-    modalTitle: { fontSize: 22, fontWeight: 'bold' },
-    monthItem: {
-        width: '100%',
-        paddingVertical: 10,
-        alignItems: 'center',
-        borderBottomWidth: 1,
-        borderBottomColor: '#eee',
-    },
-    monthText: { fontSize: 18, color: '#3b82f6' },
-    disabledMonthText: { color: '#ccc' },
-    closeButton: {
-        marginTop: 20,
-        backgroundColor: '#ef4444',
-        paddingVertical: 10,
-        paddingHorizontal: 30,
-        borderRadius: 8,
-    },
-    closeButtonText: { color: 'white', fontSize: 16, fontWeight: 'bold' },
+
+    offlineBanner: { width: '100%', backgroundColor: '#fff7ed', borderColor: '#f59e0b', borderWidth: 1, padding: 10, borderRadius: 8, marginBottom: 12 },
+    offlineText: { color: '#92400e' },
+
+    checkPanel: { padding: 10, borderRadius: 8, marginTop: 12, borderWidth: 1 },
+    okPanel: { backgroundColor: '#e6fffa', borderColor: '#14b8a6' },
+    warnPanel: { backgroundColor: '#fff7ed', borderColor: '#f59e0b' },
+    errorPanel: { backgroundColor: '#fee2e2', borderColor: '#ef4444' },
+
+    checkText: { fontSize: 14, marginBottom: 4 },
+    okText: { color: '#047857' },
+    warnText: { color: '#92400e' },
+    errorText: { color: '#991b1b' },
 });

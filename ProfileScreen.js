@@ -10,7 +10,7 @@ export default function ProfileScreen() {
                 <MaterialCommunityIcons name="account-circle-outline" size={100} color="#555" />
 
                 {/* You can add local user info here if needed */}
-                <Text style={styles.infoText}>Энэ апп нь таны төхөөрөмж дээрх мэдээллийг хадгалдаг.</Text>
+                <Text style={styles.infoText}>Энэ апп нь qr code уншдаг.</Text>
             </View>
         </SafeAreaView>
     );
