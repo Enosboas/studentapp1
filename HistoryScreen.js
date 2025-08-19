@@ -2,7 +2,7 @@ import React, { useState, useCallback, useMemo, useEffect } from 'react';
 import {
     StyleSheet, Text, View, SectionList,
     SafeAreaView, TouchableOpacity,
-    Alert, ActivityIndicator, TextInput, Animated
+    Alert, ActivityIndicator, TextInput, Animated, Platform
 } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useFocusEffect } from '@react-navigation/native';
@@ -80,7 +80,7 @@ export default function HistoryScreen({ selectedDate, setTotalCount }) {
         return () => clearTimeout(timer);
     }, [monthFiltered]);
 
-    // 👉 Header дээр “Бүгд: X” харуулах/нуух
+    // 👉 Header дээр “Бүгд: X”
     useEffect(() => {
         setTotalCount?.(monthFiltered.length);
         return () => setTotalCount?.(null);
@@ -130,61 +130,95 @@ export default function HistoryScreen({ selectedDate, setTotalCount }) {
             ]
         );
     };
+// 1) Helpers (файлын дээд талд нэг удаа байрлуул)
+    const looksLikeDownloads = (uri) => {
+        try {
+            const u = decodeURIComponent(uri || '');
+            if (/(^|[/:])(Download|Downloads)(\/|$)/i.test(u)) return true;
+        } catch {}
+        return (uri || '').includes('primary%3ADownload') || (uri || '').includes('Downloads');
+    };
 
-    // --- Export to file: ХАЙЛТ + СОНГОСОН САР ---
-    const handleExportFilteredJson = async () => {
-        if (monthFiltered.length === 0) {
-            Alert.alert("Анхаар!", "Экспортлох өгөгдөл алга (сонгосон сард хайлтын үр дүн байхгүй).");
-            return;
-        }
-        const exportData = monthFiltered.map(item => {
-            const { handler, tag, createdAt, id, assetCode,raw, assetName, account, ...rest } = item;
-            return {
-                ...rest,
-                account: (item.account ? item.account.split("-")[0].trim() : ""),
-                code: item.assetCode ?? '',
-                scanDate: item.createdAt ?? '',
-                lordID: item.raw?.split('^?')[0] ?? '',
-                unitPrice: parseFloat(item.unitPrice, 10) || 0,
-                serialNumber: parseInt(item.serialNumber, 10) || 0
-
-            };
+    const confirmAsync = (title, message) =>
+        new Promise((resolve) => {
+            Alert.alert(title, message, [
+                { text: 'Choose another folder', style: 'cancel', onPress: () => resolve(false) },
+                { text: 'Save anyway', onPress: () => resolve(true) },
+            ]);
         });
 
-        const jsonString = JSON.stringify(exportData, null, 2);
+
+
+// 2) saveJsonToAndroidFolder-г бүхэлд нь энэ хувилбараар соли
+    const saveJsonToAndroidFolder = async (jsonObj, filename) => {
         try {
-            const fileUri = FileSystem.documentDirectory + `qr_filtered_export_${Date.now()}.json`;
-            await FileSystem.writeAsStringAsync(fileUri, jsonString, { encoding: FileSystem.EncodingType.UTF8 });
-            await Sharing.shareAsync(fileUri);
-        } catch (error) {
-            console.error("Export error:", error);
-            Alert.alert("Алдаа", "Экспортлох үед алдаа гарлаа.");
+            while (true) {
+                // SAF picker-ийг нээж фолдер сонгуулна
+                const perm = await FileSystem.StorageAccessFramework.requestDirectoryPermissionsAsync();
+                if (!perm.granted) {
+                    Alert.alert('Cancelled', 'No folder selected.');
+                    return false; // picker-ээ хаасан → гарна
+                }
+
+                const dirUri = perm.directoryUri;
+
+                // Хэрэв Downloads бол анхааруулаад шийдвэр гаргуулна
+                if (looksLikeDownloads(dirUri)) {
+                    const proceed = await confirmAsync(
+                        'Heads up',
+                        'Downloads хавтас руу шууд хадгалах нь зарим төхөөрөмж дээр алдаа гаргаж болзошгүй.\n' +
+                        'Хэрэв алдаа гарвал өөр хавтас сонгоно уу.\n\nProceed anyway?'
+                    );
+                    if (!proceed) {
+                        // "Choose another folder" → picker-ээ ДАХИН нээнэ (loop үргэлжилнэ)
+                        continue;
+                    }
+                }
+
+                // Эндээс файл үүсгээд бичнэ
+                const fileUri = await FileSystem.StorageAccessFramework.createFileAsync(
+                    dirUri,
+                    filename,
+                    'application/json'
+                );
+                await FileSystem.writeAsStringAsync(fileUri, JSON.stringify(jsonObj, null, 2), {
+                    encoding: FileSystem.EncodingType.UTF8,
+                });
+
+                Alert.alert('Saved', `Saved to selected folder as ${filename}`);
+                return true;
+            }
+        } catch (e) {
+            Alert.alert('Save error', String(e?.message || e));
+            return false;
         }
     };
 
-    // --- SEND: зөвхөн JSON payload-оо логлох (сонгосон сар + хайлт) ---
-    const handleSendFilteredJson = async () => {
-        if (monthFiltered.length === 0) {
-            Alert.alert("Анхаар!", "Илгээх өгөгдөл алга (сонгосон сард хайлтын үр дүн байхгүй).");
-            return;
-        }
 
+
+    // ---------- COMMON: Send/Export хоёуланд ижил payload ----------
+    const buildPayload = () => {
         const year = selectedDate.getFullYear();
         const month = selectedDate.getMonth() + 1;
         const key = "CT$FS4";
         const deviceID = Device.osInternalBuildId || "UNKNOWN";
 
-        // Extract orgCode from QR raw (6th element)
+        // orgCode — тухайн сард уншсан бичлэгүүд бүгд ижил байгууллага гэж үзнэ
         let orgCode = "";
-        if (monthFiltered[0]?.raw) {
-            const parts = monthFiltered[0].raw.split("^?");
-            orgCode = parts[5] ?? "";
+        if (monthFiltered[0]) {
+            const first = monthFiltered[0];
+            if (first.orgCode) {
+                orgCode = first.orgCode;
+            } else if (first.raw) {
+                const p = first.raw.split("^?");
+                orgCode = p[5] ?? "";
+            }
         }
 
         const details = monthFiltered.map(item => {
             const parts = item.raw?.split("^?") || [];
 
-            // Format qrDate to YYYY-MM-DD manually
+            // QR огноо → YYYY-MM-DD
             let ognoo = "";
             if (item.date) {
                 const d = new Date(item.date);
@@ -198,11 +232,15 @@ export default function HistoryScreen({ selectedDate, setTotalCount }) {
                 }
             }
 
+            // price → 2 орны нарийвчлалтай STRING (e.g. "42857.80")
+            const numPrice = Number(item.unitPrice ?? item.price ?? 0);
+            const price = Number.isFinite(numPrice) ? numPrice.toFixed(2) : "0.00";
+
             return {
                 lordID: item.lordID ?? parts[0] ?? "",
                 account: (item.account ? item.account.split("-")[0].trim() : ""),
                 code: item.assetCode ?? item.code ?? "",
-                price: parseFloat((item.unitPrice ?? item.price) || 0).toFixed(2),
+                price, // string with two decimals
                 serial: parseInt(String(item.serialNumber ?? item.serial), 10) || 0,
                 deviceID: item.deviceId ?? item.deviceID ?? deviceID,
                 ognoo,
@@ -210,9 +248,52 @@ export default function HistoryScreen({ selectedDate, setTotalCount }) {
             };
         });
 
-        const payload = { year, month, key, orgCode, details };
+        return { year, month, key, orgCode, details };
+    };
 
-        // Log the JSON being sent
+    // --- EXPORT (iOS share / Android SAF) ---
+    const handleExportFilteredJson = async () => {
+        if (monthFiltered.length === 0) {
+            Alert.alert("Анхаар!", "Экспортлох өгөгдөл алга (сонгосон сард хайлтын үр дүн байхгүй).");
+            return;
+        }
+
+        const payload = buildPayload();
+        const filename = `qr_filtered_export_${Date.now()}.json`;
+
+        if (Platform.OS === 'android') {
+            const ok = await saveJsonToAndroidFolder(payload, filename);
+            if (ok) return; // амжилттай хадгалсан
+            // cancel хийвэл share fallback руу уная
+        }
+
+        try {
+            const fileUri = FileSystem.documentDirectory + filename;
+            await FileSystem.writeAsStringAsync(fileUri, JSON.stringify(payload, null, 2), {
+                encoding: FileSystem.EncodingType.UTF8
+            });
+            const canShare = await Sharing.isAvailableAsync();
+            if (canShare) {
+                await Sharing.shareAsync(fileUri);
+            } else {
+                Alert.alert('Saved (app storage)', `File saved at:\n${fileUri}`);
+            }
+        } catch (error) {
+            console.error("Export error:", error);
+            Alert.alert("Алдаа", "Экспортлох үед алдаа гарлаа.");
+        }
+    };
+
+    // --- SEND (payload-той адил формат) ---
+    const handleSendFilteredJson = async () => {
+        if (monthFiltered.length === 0) {
+            Alert.alert("Анхаар!", "Илгээх өгөгдөл алга (сонгосон сард хайлтын үр дүн байхгүй).");
+            return;
+        }
+
+        const payload = buildPayload();
+
+        // Log
         console.log("=== JSON SENDING TO API ===");
         console.log(JSON.stringify(payload, null, 2));
 
@@ -227,15 +308,12 @@ export default function HistoryScreen({ selectedDate, setTotalCount }) {
                 const raw = await resp.text().catch(() => "");
                 Alert.alert("Сервер алдаа", `HTTP ${resp.status}${raw ? "\n" + raw.slice(0, 500) : ""}`);
             } else {
-                Alert.alert("Илгээлээ", `${details.length} бичлэгийг амжилттай илгээлээ.`);
+                Alert.alert("Илгээлээ", `${payload.details.length} бичлэгийг амжилттай илгээлээ.`);
             }
         } catch (e) {
             Alert.alert("Алдаа", `Илгээх үед алдаа гарлаа:\n${String(e?.message || e)}`);
         }
     };
-
-
-
 
     const handleZoomItem = (item) => {
         setZoomedItem(item);
@@ -279,7 +357,7 @@ export default function HistoryScreen({ selectedDate, setTotalCount }) {
                             value={searchQuery}
                             onChangeText={setSearchQuery}
                         />
-                        {/* Send button */}
+                        {/* Send */}
                         <TouchableOpacity onPress={handleSendFilteredJson} style={{ padding: 8, marginLeft: 8 }}>
                             <MaterialCommunityIcons name="send" size={24} color="#2563eb" />
                         </TouchableOpacity>
@@ -364,10 +442,10 @@ const ListItem = React.memo(({ item, isSelectionMode, selectedItems, onSelect, o
                         Нэгж үнэ: {item.unitPrice ? Number(item.unitPrice).toLocaleString('mn-MN') : '—'} ₮{"\n"}
                         Бүртгэлийн данс: {item.account ?? '—'}{"\n"}
                         А.О.Огноо: {(() => {
-                            if (!item.date) return '—';
-                            const d = new Date(item.date);
-                            return isNaN(d) ? String(item.date) : d.toLocaleDateString('mn-MN');
-                        })()}
+                        if (!item.date) return '—';
+                        const d = new Date(item.date);
+                        return isNaN(d) ? String(item.date) : d.toLocaleDateString('mn-MN');
+                    })()}
                     </Text>
                     <Text style={styles.itemDate}>
                         {item.createdAt ? new Date(item.createdAt).toLocaleString('en-GB') : '—'}

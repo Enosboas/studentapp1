@@ -11,7 +11,7 @@ import { useIsFocused } from '@react-navigation/native';
 import { useNetInfo } from '@react-native-community/netinfo';
 
 const ALERT_COOLDOWN_MS = 1200;
-const RESCAN_DELAY_MS = 1000; // бага зэрэг өсгөвөл давхар уншилт багасна
+const RESCAN_DELAY_MS = 1000; // давхар уншилтыг багасгахад тусална
 
 export default function MainScreen({ selectedDate }) {
     const [infoText, setInfoText] = useState(null);
@@ -79,25 +79,23 @@ export default function MainScreen({ selectedDate }) {
         return arr.map(it => {
             if (!it.orgCode) {
                 const rawParts = (it.raw || '').split('^?');
-                return { ...it, orgCode: rawParts[5] || '' }; // 6 дахь талбар
+                return { ...it, orgCode: rawParts[5] || '' }; // QR-ийн 6 дахь талбар
             }
             return it;
         });
     };
 
-    const ymKey = (y, m) => `${y}-${String(m).padStart(2, "0")}`;
-
+    // ---- Зөвхөн НЭГ алдаа буцаадаг урьдчилсан шалгалт ----
     const runPrecheck = (parsed, selectedDate, history, isConnected) => {
-        let level = 'ok';
-        const messages = [];
-
-        // 1) OrgCode зөрчил
+        // 1) Байгууллагын код зөрчил (хамгийн түрүүнд)
         const existingOrgs = new Set(history.map(it => it.orgCode).filter(Boolean));
         if (existingOrgs.size > 0) {
             const firstOrg = Array.from(existingOrgs)[0];
             if (parsed.orgCode && parsed.orgCode !== firstOrg) {
-                level = 'error';
-                messages.push('Өөр байгууллагын хөрөнгө байна. Хуучин түүхтэй зөрчилдөж байна. Хуучин түүхээ устгаад шинэ тооллого эхлүүлнэ үү.');
+                return {
+                    level: 'error',
+                    messages: ['Өөр байгууллагын хөрөнгө байна. Хуучин түүхтэй зөрчилдөж байна. Хуучин түүхээ устгаад шинэ тооллого эхлүүлнэ үү.']
+                };
             }
         }
 
@@ -106,33 +104,39 @@ export default function MainScreen({ selectedDate }) {
             it => it.assetCode === parsed.assetCode && it.serialNumber === parsed.serialNumber
         );
         if (isDup) {
-            level = 'error';
-            messages.push('Энэ хөрөнгө аль хэдийн хадгалагдсан байна (давхцал).');
+            return {
+                level: 'error',
+                messages: ['Энэ хөрөнгө аль хэдийн хадгалагдсан байна (давхцал).']
+            };
         }
 
         // 3) Хадгалсан түүхийн он/сар ↔ сонгосон он/сар
+        const ymKey = (y, m) => `${y}-${String(m).padStart(2, "0")}`;
         const selectedYM = ymKey(selectedDate.getFullYear(), selectedDate.getMonth() + 1);
         const historyYMSet = new Set(
             history.filter(it => it.year && it.month).map(it => ymKey(it.year, it.month))
         );
         const hasDifferentMonth = [...historyYMSet].some(ym => ym !== selectedYM);
         if (hasDifferentMonth) {
-            level = 'error';
-            messages.push(
-                `Хадгалсан түүх ${[...historyYMSet].join(', ')} сард байна. ` +
-                `Харин сонгосон сар ${selectedYM}. Зөрчилтэй тул тохирох сар руу шилжих эсвэл түүхээ цэвэрлэнэ үү.`
-            );
+            return {
+                level: 'error',
+                messages: [
+                    `Хадгалсан түүх ${[...historyYMSet].join(', ')} сард байна. ` +
+                    `Харин сонгосон сар ${selectedYM}. Зөрчилтэй тул тохирох сар руу шилжих эсвэл түүхээ цэвэрлэнэ үү.`
+                ]
+            };
         }
 
-        // 4) Дэлгэрэнгүй татагдаагүй (оффлайн/сервер алдаа) → анхаар
+        // --- WARN/OK нэгтгэнэ ---
+        const messages = [];
+        let level = 'ok';
+
         if (parsed.assetName === '[интернет шаардлагатай]' || parsed.assetName === '[оффлайн хадгалсан]') {
-            if (level !== 'error') level = 'warn';
+            level = 'warn';
             messages.push('Дэлгэрэнгүй мэдээлэл татагдаагүй (оффлайн эсвэл сервер алдаа).');
         }
-
-        // 5) Оффлайн → анхаар
         if (!isConnected) {
-            if (level !== 'error') level = 'warn';
+            level = 'warn';
             messages.push('Оффлайн горим: зөвхөн төхөөрөмж дээр хадгална. Дараа нь синк хийж болно.');
         }
 
@@ -230,7 +234,7 @@ export default function MainScreen({ selectedDate }) {
             if (result.level === 'error') {
                 // Алдаа бол "Мэдээлэл" хэсэгт data-г үзүүлэхгүй
                 setInfoText(null);
-                showOnceAlert('Алдаа', result.messages.join('\n'), () => unlockScanner());
+                showOnceAlert('Алдаа', result.messages[0], () => unlockScanner());
                 return;
             }
 
@@ -241,7 +245,7 @@ export default function MainScreen({ selectedDate }) {
                 showOnceAlert('Анхааруулга', result.messages.join('\n'));
             }
 
-            // Амжилттай үед lock-оо тайлахгүй (Rescan товчоор нээнэ)
+            // Амжилттай үед lock суллана (Rescan товчоор дахин унших боломжтой)
             scanLocked.current = false;
 
         } catch (e) {
@@ -256,7 +260,7 @@ export default function MainScreen({ selectedDate }) {
             return;
         }
         if (precheck.level === 'error') {
-            showOnceAlert('Хадгалах боломжгүй', precheck.messages.join('\n'));
+            showOnceAlert('Хадгалах боломжгүй', precheck.messages[0] || 'Алдаа байна.');
             return;
         }
 
